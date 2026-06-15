@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VCP Trading System – US Equities</title>
+  <link rel="stylesheet" href="/static/styles.css?v=11">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ── HEADER ─────────────────────────────────────────────── -->
+<header>
+  <div class="header-brand">
+    <div class="brand-logo">V</div>
+    <div>
+      <div class="brand-name">VCP Trading System</div>
+      <div class="brand-sub">Volatility Contraction Pattern · US Equities · Daily</div>
+    </div>
+  </div>
+  <div class="header-status">
+    <div class="market-clock" id="clock">--:--:-- ET</div>
+    <div class="ws-badge" id="ws-badge">
+      <span class="ws-dot"></span>
+      <span id="ws-label">Connecting…</span>
+    </div>
+  </div>
+</header>
+
+<!-- ── TABS ──────────────────────────────────────────────── -->
+<nav class="tab-bar">
+  <button class="tab-btn active" data-tab="screener">
+    <span class="tab-icon">📡</span> Live Screener
+  </button>
+  <button class="tab-btn" data-tab="backtest">
+    <span class="tab-icon">📊</span> Backtesting Engine
+  </button>
+</nav>
+
+<!-- ── MAIN ───────────────────────────────────────────────── -->
+<main>
+
+  <!-- ══════════════ TAB 1: LIVE SCREENER ══════════════════ -->
+  <div class="tab-content active" id="tab-screener">
+
+    <div class="stats-bar">
+      <div class="stat-card">
+        <div class="stat-label">Active Signals</div>
+        <div class="stat-value green" id="stat-total">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">STRONG</div>
+        <div class="stat-value green" id="stat-strong">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">MODERATE</div>
+        <div class="stat-value yellow" id="stat-moderate">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">WATCH</div>
+        <div class="stat-value" id="stat-watch">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Monitored Tickers</div>
+        <div class="stat-value" id="stat-watchlist">200</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">US Market</div>
+        <div class="stat-value" id="stat-market">—</div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <button class="btn btn-primary" id="btn-refresh" onclick="triggerRefresh()">
+        <span>⚡</span> REFRESH SCREENER
+      </button>
+      <button class="btn" onclick="openWatchlistModal()">
+        <span>📋</span> Watchlist
+      </button>
+      <div class="last-update">
+        Last update: <span id="last-update-time">—</span>
+      </div>
+    </div>
+
+    <!-- Watchlist chips -->
+    <div class="ticker-chips-wrap" id="chips-wrap">
+      <div class="ticker-chips-header" onclick="toggleChips()">
+        <span class="ticker-chips-title">
+          📋 Watchlist — <span id="chips-count">200</span> monitored tickers
+        </span>
+        <span class="ticker-chips-toggle">▼</span>
+      </div>
+      <div class="ticker-chips-body" id="ticker-chips-body"></div>
+    </div>
+
+    <!-- Download progress (screener) -->
+    <div id="scan-progress" class="scan-progress" style="display:none">
+      <div class="scan-progress-top">
+        <div class="scan-label-wrap">
+          <span class="scan-spinner"></span>
+          <span id="progress-label">Downloading Yahoo Finance data…</span>
+        </div>
+        <span class="scan-counter" id="progress-counter">0 / 200</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+      </div>
+      <div class="progress-ticker" id="progress-ticker">↓ waiting…</div>
+    </div>
+
+    <div class="table-wrapper">
+      <table id="screener-table">
+        <thead>
+          <tr>
+            <th onclick="sortTable('ticker')">Ticker / ISIN ⇅</th>
+            <th onclick="sortTable('currentPrice')">Price</th>
+            <th onclick="sortTable('distanceFromHighPct')">Dist. High ⇅</th>
+            <th onclick="sortTable('bbWidthPct')">BB Width % ⇅</th>
+            <th onclick="sortTable('atr14')">ATR (14)</th>
+            <th onclick="sortTable('volumeRatio')">Vol Ratio ⇅</th>
+            <th onclick="sortTable('signalStrength')">Signal ⇅</th>
+            <th>Detected</th>
+            <th>Chart</th>
+          </tr>
+        </thead>
+        <tbody id="screener-body">
+          <tr>
+            <td colspan="9">
+              <div class="empty-state">
+                <div class="icon">🔍</div>
+                <p>Press <strong>REFRESH SCREENER</strong> or wait for the automatic cycle (60 s)</p>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div><!-- /tab-screener -->
+
+
+  <!-- ══════════════ TAB 2: BACKTESTING ════════════════════ -->
+  <div class="tab-content" id="tab-backtest">
+    <div class="backtest-grid">
+
+      <!-- LEFT: Parameters -->
+      <div class="panel">
+        <div class="panel-title">⚙️ Backtest Parameters</div>
+
+        <div class="form-group">
+          <label>Tickers (comma-separated)</label>
+          <input type="text" id="bt-tickers"
+                 value="ALL (use default watchlist)"
+                 placeholder="AAPL,NVDA… or leave empty for all 200 tickers">
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Start Date</label>
+            <input type="date" id="bt-start" value="2022-01-01">
+          </div>
+          <div class="form-group">
+            <label>End Date</label>
+            <input type="date" id="bt-end" value="2024-12-31">
+          </div>
+        </div>
+
+        <div class="form-section-title">💰 Capital</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Initial Capital ($)</label>
+            <input type="number" id="bt-capital" value="100000" step="10000" min="10000">
+          </div>
+          <div class="form-group">
+            <label>Amount per Trade ($)</label>
+            <input type="number" id="bt-position" value="10000" step="1000" min="1000">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Max Open Positions at Once (0 = unlimited)</label>
+          <input type="number" id="bt-max-pos" value="5" step="1" min="0" max="200">
+        </div>
+
+        <div class="form-section-title">📈 Breakout from Highs</div>
+        <div class="form-group">
+          <label>High Window (trading days)</label>
+          <select id="bt-high-period">
+            <option value="252">52 Weeks (252 days)</option>
+            <option value="100">100 Days</option>
+            <option value="60">60 Days</option>
+          </select>
+        </div>
+
+        <div class="form-section-title">📉 Volatility Contraction (BB)</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>BB Width Max (%)</label>
+            <input type="number" id="bt-bb-width" value="8.0" step="0.5" min="1" max="20">
+          </div>
+          <div class="form-group">
+            <label>Min Contraction Bars</label>
+            <input type="number" id="bt-bb-bars" value="3" min="1" max="30">
+          </div>
+        </div>
+
+        <div class="form-section-title">📊 Volume Filter</div>
+        <div class="form-group">
+          <label>Volume Multiplier (× 20-day avg)</label>
+          <input type="number" id="bt-vol-mult" value="1.3" step="0.1" min="1.0" max="5.0">
+        </div>
+
+        <div class="form-section-title">🛡️ Risk Management</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Stop Loss (× ATR14)</label>
+            <input type="number" id="bt-stop" value="1.5" step="0.1" min="0.5" max="5.0">
+          </div>
+          <div class="form-group">
+            <label>Trailing Stop (× ATR14)</label>
+            <input type="number" id="bt-trail" value="2.0" step="0.1" min="0.5" max="5.0">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Max Holding (days, 0 = ∞)</label>
+            <input type="number" id="bt-maxhold" value="60" min="0" max="365">
+          </div>
+          <div class="form-group" style="display:flex;align-items:flex-end;padding-bottom:2px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;font-size:14px;">
+              <input type="checkbox" id="bt-trailing" checked style="width:auto;height:18px;width:18px;">
+              Trailing Stop Active
+            </label>
+          </div>
+        </div>
+
+        <button class="btn btn-run" onclick="runBacktest()">▶ RUN BACKTEST</button>
+      </div>
+
+      <!-- RIGHT: Results -->
+      <div class="panel results-panel" id="results-panel">
+        <div class="panel-title">📈 Results</div>
+
+        <!-- Backtest progress bar -->
+        <div id="bt-progress" class="scan-progress" style="display:none;border-color:var(--yellow);">
+          <div class="scan-progress-top">
+            <div class="scan-label-wrap">
+              <span class="scan-spinner" style="border-top-color:var(--yellow)"></span>
+              <span id="bt-progress-label">Analysis in progress…</span>
+            </div>
+            <span class="scan-counter" id="bt-progress-counter" style="color:var(--yellow)">0 / 0</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="bt-progress-fill" style="width:0%;background:linear-gradient(90deg,#b8860b,#f1c40f)"></div>
+          </div>
+          <div class="progress-ticker" id="bt-progress-ticker">↓ waiting…</div>
+        </div>
+
+        <div id="results-placeholder" style="text-align:center;padding:60px 20px;color:#a8c0d8;">
+          <div style="font-size:36px;margin-bottom:12px;">📉</div>
+          <p style="color:#dce8f5;font-size:17px;">Configure parameters and press <strong>RUN BACKTEST</strong></p>
+          <p style="margin-top:8px;font-size:14px;color:#a8c0d8;">Data is read from local cache (or downloaded on first run).</p>
+        </div>
+
+        <div id="results-content" style="display:none;">
+          <div class="metrics-grid" id="metrics-grid"></div>
+          <div class="chart-container">
+            <canvas id="equity-chart"></canvas>
+          </div>
+          <div class="trades-section">
+            <h4>Trade List</h4>
+            <div class="table-wrapper" style="max-height:360px;overflow-y:auto;">
+              <table id="trades-table">
+                <thead>
+                  <tr>
+                    <th>Ticker / ISIN</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>Entry Price</th>
+                    <th>Exit Price</th>
+                    <th>Shares</th>
+                    <th>P&amp;L $</th>
+                    <th>Return %</th>
+                    <th>Div. %</th>
+                    <th>Days</th>
+                    <th>Exit Reason</th>
+                    <th>Chart</th>
+                  </tr>
+                </thead>
+                <tbody id="trades-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Annual performance -->
+          <div class="perf-section" id="annual-section" style="display:none">
+            <h4>📅 Year by Year Performance</h4>
+            <div class="table-wrapper">
+              <table id="annual-table">
+                <thead>
+                  <tr>
+                    <th>Year</th>
+                    <th>Trades</th>
+                    <th>Winners</th>
+                    <th>Losers</th>
+                    <th>Win Rate</th>
+                    <th>P&amp;L $</th>
+                    <th title="P&amp;L / Initial Capital">① Return Init. Cap.</th>
+                    <th title="P&amp;L / (TradeAmount × MaxPositions)">② Return Max Risk Cap.</th>
+                    <th title="P&amp;L / Daily avg deployed capital">③ Return Avg. Deploy. Cap.</th>
+                    <th title="Daily avg capital effectively deployed in the year">Avg. Deploy. Cap. $</th>
+                  </tr>
+                </thead>
+                <tbody id="annual-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Monthly performance grid -->
+          <div class="perf-section" id="monthly-section" style="display:none">
+            <h4>📆 Monthly Performance</h4>
+            <div style="overflow-x:auto">
+              <div id="monthly-grid"></div>
+            </div>
+          </div>
+
+        </div><!-- /results-content -->
+
+        <div class="loading-overlay" id="bt-loading" style="display:none;">
+          <div class="spinner"></div>
+          <span>Calculating…</span>
+        </div>
+      </div>
+
+    </div>
+  </div><!-- /tab-backtest -->
+
+</main>
+
+<!-- ══════════════ CHART MODAL ════════════════════════════ -->
+<div id="chart-modal" class="modal-overlay" style="display:none" onclick="modalBackdropClick(event)">
+  <div class="modal-box">
+    <div class="modal-hdr">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;">
+        <span class="modal-ticker-name" id="modal-ticker">—</span>
+        <span class="modal-isin-badge" id="modal-isin">—</span>
+        <a id="modal-yf-link" class="modal-yf-link" href="#" target="_blank" rel="noopener">
+          📊 Yahoo Finance ↗
+        </a>
+      </div>
+      <button class="modal-close-btn" onclick="closeChartModal()">✕</button>
+    </div>
+    <div class="modal-chart-wrap">
+      <canvas id="modal-chart-canvas"></canvas>
+    </div>
+    <div class="modal-trade-info" id="modal-trade-info"></div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script src="/static/app.js?v=11"></script>
+</body>
+</html>
