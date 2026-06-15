@@ -789,8 +789,11 @@ function renderMonthlyGrid(monthlyStats) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  CHART MODAL
+//  CHART MODAL  (price + entry/exit/stop + dividend arrows)
 // ═══════════════════════════════════════════════════════════════════
+
+// Per-chart dividend registry used by tooltip callback
+let _chartDivs = [];   // [{labelIdx, date, amount, yieldPct, price}]
 
 // tradeIdx: index into _tradeReg (or null for screener click)
 async function openChartModal(ticker, tradeIdx) {
@@ -818,14 +821,14 @@ async function openChartModal(ticker, tradeIdx) {
 
   modal.style.display = 'flex';
 
-  // Load OHLCV data
-  let raw = _tickerCache[ticker] || _screenerDB?.tickers?.[ticker] || null;
-  if (!raw) {
+  // ── Always prefer the individual ticker file (has dividends + full history)
+  if (!_tickerCache[ticker]?.divs) {
     try {
       const resp = await fetch(`data/${ticker}.json`);
-      if (resp.ok) { raw = await resp.json(); _tickerCache[ticker] = raw; }
-    } catch { /* no chart */ }
+      if (resp.ok) { _tickerCache[ticker] = await resp.json(); }
+    } catch { /* fall back to screener data */ }
   }
+  const raw = _tickerCache[ticker] || _screenerDB?.tickers?.[ticker] || null;
 
   const wrap = document.getElementById('modal-chart-wrap');
   if (!raw) {
@@ -833,13 +836,13 @@ async function openChartModal(ticker, tradeIdx) {
     return;
   }
 
-  // Show last 180 bars (or a window around the trade)
+  // ── Window: 180 bars or centred on the trade ──────────────────
   const n = raw.c.length;
-  let sliceEnd = n;
+  let sliceEnd   = n;
   let sliceStart = Math.max(0, n - 180);
 
-  if (trade) {
-    const exitIdx = raw.d ? raw.d.lastIndexOf(trade.exitDate) : -1;
+  if (trade && raw.d) {
+    const exitIdx = raw.d.lastIndexOf(trade.exitDate);
     if (exitIdx > 0) {
       sliceEnd   = Math.min(n, exitIdx + 20);
       sliceStart = Math.max(0, exitIdx - 160);
@@ -849,7 +852,7 @@ async function openChartModal(ticker, tradeIdx) {
   const closes = raw.c.slice(sliceStart, sliceEnd);
   const labels = raw.d?.slice(sliceStart, sliceEnd) ?? closes.map((_, k) => String(k));
 
-  // Annotations: entry / exit / stop
+  // ── Reset canvas ──────────────────────────────────────────────
   if (wrap && !wrap.querySelector('canvas')) {
     wrap.innerHTML = '<canvas id="modal-chart-canvas"></canvas>';
   }
@@ -857,42 +860,110 @@ async function openChartModal(ticker, tradeIdx) {
   if (!canvas) return;
   if (_modalChart) { _modalChart.destroy(); _modalChart = null; }
 
+  // ── Main price line ───────────────────────────────────────────
   const datasets = [{
     label: ticker, data: closes,
     borderColor: '#4db8ff', backgroundColor: 'rgba(77,184,255,0.05)',
     borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.1,
+    order: 10,
   }];
 
-  // Entry/exit/stop lines as point datasets
+  // ── Entry / exit / stop datasets ─────────────────────────────
   if (trade && raw.d) {
     const entryIdx = raw.d.indexOf(trade.entryDate) - sliceStart;
     const exitIdx2 = raw.d.lastIndexOf(trade.exitDate) - sliceStart;
-    if (entryIdx >= 0) {
+    if (entryIdx >= 0 && entryIdx < closes.length) {
       const entryPts = closes.map((_, k) => k === entryIdx ? trade.entryPrice : null);
-      datasets.push({ label: 'Entry', data: entryPts, borderColor:'#2ecc71', backgroundColor:'#2ecc71', pointRadius: closes.map((_, k) => k === entryIdx ? 7 : 0), showLine: false });
-      const stopPts  = closes.map((_, k) => k >= entryIdx && k <= exitIdx2 ? trade.stopLossPrice : null);
-      datasets.push({ label: 'Stop', data: stopPts, borderColor:'#e74c3c', borderDash:[4,4], borderWidth:1, pointRadius:0, fill:false, tension:0 });
+      datasets.push({
+        label: 'Entry', data: entryPts, showLine: false, fill: false,
+        borderColor: '#2ecc71', backgroundColor: '#2ecc71',
+        pointRadius: closes.map((_, k) => k === entryIdx ? 9 : 0), order: 1,
+      });
+      if (exitIdx2 >= 0) {
+        const stopPts = closes.map((_, k) => k >= entryIdx && k <= exitIdx2 ? trade.stopLossPrice : null);
+        datasets.push({
+          label: 'Stop', data: stopPts, showLine: true, fill: false,
+          borderColor: '#e74c3c', borderDash: [4, 4], borderWidth: 1, pointRadius: 0,
+          tension: 0, order: 9,
+        });
+      }
     }
-    if (exitIdx2 >= 0) {
+    if (exitIdx2 >= 0 && exitIdx2 < closes.length) {
       const exitPts = closes.map((_, k) => k === exitIdx2 ? trade.exitPrice : null);
-      datasets.push({ label: 'Exit', data: exitPts, borderColor:'#f1c40f', backgroundColor:'#f1c40f', pointRadius: closes.map((_, k) => k === exitIdx2 ? 7 : 0), showLine: false });
+      datasets.push({
+        label: 'Exit', data: exitPts, showLine: false, fill: false,
+        borderColor: '#f1c40f', backgroundColor: '#f1c40f',
+        pointRadius: closes.map((_, k) => k === exitIdx2 ? 9 : 0), order: 1,
+      });
     }
   }
 
+  // ── Dividend arrows (▲ triangles) ─────────────────────────────
+  _chartDivs = [];
+  if (raw.divs?.d) {
+    for (let di = 0; di < raw.divs.d.length; di++) {
+      const divDate = raw.divs.d[di];
+      const divAmt  = raw.divs.a[di];
+      const labelIdx = labels.indexOf(divDate);
+      if (labelIdx < 0) continue;
+      const price    = closes[labelIdx];
+      const yieldPct = price > 0 ? divAmt / price * 100 : 0;
+      _chartDivs.push({ labelIdx, date: divDate, amount: divAmt, yieldPct, price });
+    }
+  }
+
+  if (_chartDivs.length > 0) {
+    const divData = closes.map((_, k) => {
+      const d = _chartDivs.find(x => x.labelIdx === k);
+      return d ? d.price : null;
+    });
+    datasets.push({
+      label: 'Dividend ▲',
+      data: divData,
+      showLine: false, fill: false,
+      // upward triangle drawn below price so it sits "under" the candle
+      pointStyle:            closes.map((_, k) => _chartDivs.find(x => x.labelIdx === k) ? 'triangle' : 'circle'),
+      pointRadius:           closes.map((_, k) => _chartDivs.find(x => x.labelIdx === k) ? 11 : 0),
+      pointHoverRadius:      closes.map((_, k) => _chartDivs.find(x => x.labelIdx === k) ? 14 : 0),
+      pointBackgroundColor:  '#f1c40f',
+      pointBorderColor:      '#000',
+      pointBorderWidth:      1.5,
+      rotation:              0,    // triangle pointing up
+      order: 2,
+    });
+  }
+
+  // ── Build chart ───────────────────────────────────────────────
+  const hasAnnotations = !!trade || _chartDivs.length > 0;
   _modalChart = new Chart(canvas, {
     type: 'line',
     data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       plugins: {
-        legend: { display: !!trade, labels: { color: '#a8c0d8', font: { size: 12 } } },
-        tooltip: { callbacks: { label: c => `$${c.raw?.toFixed?.(2) ?? c.raw}` } }
+        legend: {
+          display: hasAnnotations,
+          labels: { color: '#a8c0d8', font: { size: 12 }, filter: item => item.text !== ticker },
+        },
+        tooltip: {
+          callbacks: {
+            label(ctx) {
+              if (ctx.dataset.label === 'Dividend ▲') {
+                const d = _chartDivs.find(x => x.labelIdx === ctx.dataIndex);
+                if (d) return `Dividend: $${d.amount.toFixed(4)}  (+${d.yieldPct.toFixed(3)}% yield)`;
+              }
+              if (ctx.raw === null || ctx.raw === undefined) return null;
+              return `$${typeof ctx.raw === 'number' ? ctx.raw.toFixed(2) : ctx.raw}`;
+            },
+            title(ctx) { return ctx[0]?.label ?? ''; },
+          },
+        },
       },
       scales: {
         x: { ticks: { color: '#6a8aaa', maxTicksLimit: 8 }, grid: { color: '#1e3050' } },
-        y: { ticks: { color: '#a8c0d8', callback: v => '$' + v.toFixed(0) }, grid: { color: '#1e3050' } }
-      }
-    }
+        y: { ticks: { color: '#a8c0d8', callback: v => '$' + v.toFixed(0) }, grid: { color: '#1e3050' } },
+      },
+    },
   });
 }
 
