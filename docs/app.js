@@ -47,13 +47,14 @@ const DEFAULT_CFG = {
 
 // ── State ─────────────────────────────────────────────────────────
 let _screenerDB  = null;   // {updated, tickers: {AAPL: {d,o,h,l,c,v}}}
-let _tickerCache = {};     // full-history JSON keyed by ticker symbol
-let _signals     = [];     // last screener result
-let _tradeReg    = [];     // indexed trade registry for modal lookup
-let _equityChart = null;
-let _modalChart  = null;
-let _sortKey     = 'signalStrength';
-let _sortAsc     = true;
+let _tickerCache      = {};     // full-history JSON keyed by ticker symbol
+let _signals          = [];     // last screener result
+let _tradeReg         = [];     // all trades reversed — used by chart modal (index = onclick arg)
+let _divFilterActive  = false;  // true when "with dividends only" filter is on
+let _equityChart      = null;
+let _modalChart       = null;
+let _sortKey          = 'signalStrength';
+let _sortAsc          = true;
 
 // ── Boot ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -495,22 +496,37 @@ function runTickerBacktest(ticker, raw, cfg) {
         else                 { exitPx = curClose; reason = 'END_OF_TEST'; }
 
         const retPct = (exitPx - entryPx) / entryPx * 100;
+        const exitDateStr = dates[i];
+
+        // ── Dividends received during holding period ──────────────
+        // mirrors Python: entry_ts < date <= exit_ts
+        let divPerShare = 0;
+        if (raw.divs?.d) {
+          for (let di = 0; di < raw.divs.d.length; di++) {
+            const dd = raw.divs.d[di];
+            if (dd > entryDateStr && dd <= exitDateStr) divPerShare += raw.divs.a[di];
+          }
+        }
+        const divYieldPct = entryPx > 0 ? +(divPerShare / entryPx * 100).toFixed(4) : 0;
+
         trades.push({
           ticker,
-          entryDate:     entryDateStr,
-          exitDate:      dates[i],
-          entryPrice:    +entryPx.toFixed(2),
-          exitPrice:     +exitPx.toFixed(2),
-          stopLossPrice: +stopLoss.toFixed(2),
-          returnPct:     +retPct.toFixed(2),
-          pnlUsd:        +((exitPx - entryPx) * shares).toFixed(2),
-          investedUsd:   +(entryPx * shares).toFixed(2),
+          entryDate:        entryDateStr,
+          exitDate:         exitDateStr,
+          entryPrice:       +entryPx.toFixed(2),
+          exitPrice:        +exitPx.toFixed(2),
+          stopLossPrice:    +stopLoss.toFixed(2),
+          returnPct:        +retPct.toFixed(2),
+          pnlUsd:           +((exitPx - entryPx) * shares).toFixed(2),
+          investedUsd:      +(entryPx * shares).toFixed(2),
           shares,
-          holdingDays:   heldDays,
-          exitReason:    reason,
-          winner:        retPct > 0,
-          // raw arrays sliced around the trade (for chart modal)
-          _rawRef:       { ticker, entryDate: entryDateStr, exitDate: dates[i] },
+          holdingDays:      heldDays,
+          exitReason:       reason,
+          winner:           retPct > 0,
+          dividendPerShare: +divPerShare.toFixed(4),
+          dividendYieldPct: divYieldPct,
+          dividendUsd:      +(divPerShare * shares).toFixed(2),
+          hasDividend:      divPerShare > 0,
         });
         inPos = false;
       }
@@ -650,7 +666,7 @@ function renderResults(result) {
     setHtml('metrics-grid', `<div style="grid-column:1/-1;padding:20px;color:#e74c3c">${result.errorMessage}</div>`);
     hide('annual-section'); hide('monthly-section');
     renderEquityChart(result.equityCurve, result.equityLabels);
-    setHtml('trades-body', '<tr><td colspan="10" style="text-align:center;color:#6a8aaa">No trades</td></tr>');
+    setHtml('trades-body', '<tr><td colspan="11" style="text-align:center;color:#6a8aaa">No trades</td></tr>');
     return;
   }
 
@@ -710,17 +726,34 @@ function renderEquityChart(curve, labels) {
   });
 }
 
+// renderTradesTable: stores full reversed list in _tradeReg, then applies filter
 function renderTradesTable(trades) {
+  if (!trades.length) {
+    _tradeReg = [];
+    _renderTradeRows([]);
+    return;
+  }
+  _tradeReg = [...trades].reverse();   // registry indexed by onclick arg
+  _divFilterActive = false;            // reset filter on new backtest
+  _updateDivFilterBtn();
+  _renderTradeRows(_tradeReg);
+}
+
+// Re-render just the rows (called by filter toggle too)
+function _renderTradeRows(display) {
   const tbody = document.getElementById('trades-body');
   if (!tbody) return;
-  if (!trades.length) { tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#6a8aaa">No trades</td></tr>'; return; }
-
-  // Store in registry so chart modal can look them up by index
-  _tradeReg = [...trades].reverse();
-
-  tbody.innerHTML = _tradeReg.map((t, idx) => {
+  if (!display.length) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#6a8aaa">No trades match the filter</td></tr>';
+    return;
+  }
+  tbody.innerHTML = display.map(t => {
+    const idx  = _tradeReg.indexOf(t);   // index in full registry — for chart modal
     const cls  = t.winner ? 'positive' : 'negative';
     const sign = t.winner ? '+' : '';
+    const divCell = t.hasDividend
+      ? `<span class="positive" title="$${t.dividendPerShare.toFixed(4)} per share">+${t.dividendYieldPct.toFixed(2)}%</span>`
+      : `<span style="color:#3a5070">—</span>`;
     return `<tr>
       <td class="ticker-cell"><span style="cursor:pointer;color:#4db8ff" onclick="openChartModal('${t.ticker}',${idx})">${t.ticker}</span></td>
       <td style="font-size:14px">${t.entryDate}</td>
@@ -730,10 +763,33 @@ function renderTradesTable(trades) {
       <td style="font-size:15px">${t.shares}</td>
       <td class="${cls}">${sign}${fmt$(t.pnlUsd)}</td>
       <td class="${cls}">${sign}${t.returnPct.toFixed(2)}%</td>
+      <td style="font-size:15px">${divCell}</td>
       <td style="font-size:15px;color:#6a8aaa">${t.holdingDays}d</td>
       <td style="font-size:13px;color:#6a8aaa">${fmtReason(t.exitReason)}</td>
     </tr>`;
   }).join('');
+}
+
+// Toggle "with dividends only" filter
+function toggleDivFilter() {
+  _divFilterActive = !_divFilterActive;
+  _updateDivFilterBtn();
+  const subset = _divFilterActive ? _tradeReg.filter(t => t.hasDividend) : _tradeReg;
+  _renderTradeRows(subset);
+}
+
+function _updateDivFilterBtn() {
+  const btn = document.getElementById('btn-div-filter');
+  if (!btn) return;
+  if (_divFilterActive) {
+    btn.style.borderColor = '#f1c40f';
+    btn.style.color       = '#f1c40f';
+    btn.textContent       = '📅 All Trades';
+  } else {
+    btn.style.borderColor = '';
+    btn.style.color       = '';
+    btn.textContent       = '📅 With Dividends Only';
+  }
 }
 
 function fmtReason(r) {
