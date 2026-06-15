@@ -74,6 +74,9 @@ main { padding:24px 28px;max-width:1700px;margin:0 auto; }
 .btn-primary { background:var(--green);border-color:var(--green);color:#000;font-weight:800;font-size:17px; }
 .btn-primary:hover    { background:#35e07e;border-color:#35e07e;color:#000; }
 .btn-primary:disabled { opacity:0.5;cursor:not-allowed; }
+.btn-update { border-color:#4db8ff;color:#4db8ff; }
+.btn-update:hover    { background:rgba(77,184,255,0.12);border-color:#80d0ff;color:#80d0ff; }
+.btn-update:disabled { opacity:0.5;cursor:not-allowed; }
 .btn-run { width:100%;margin-top:10px;padding:14px 22px;font-size:18px;font-weight:800;background:linear-gradient(135deg,#1a6630,#0d4020);border:2px solid var(--green);color:var(--green);border-radius:8px;cursor:pointer;transition:var(--trans); }
 .btn-run:hover { background:linear-gradient(135deg,#22884a,#155530);box-shadow:0 0 12px rgba(46,204,113,.35); }
 .last-update { font-size:15px;color:var(--gray2);margin-left:auto; }
