@@ -179,6 +179,12 @@ select option { background:var(--bg-card);color:var(--white); }
 .loading-overlay { position:absolute;inset:0;background:rgba(10,16,28,.75);display:flex;align-items:center;justify-content:center;border-radius:var(--radius);z-index:20;backdrop-filter:blur(3px);gap:14px;color:var(--gray1);font-size:15px; }
 .results-panel { position:relative; }
 
+.sig-age-badge { display:inline-block;font-size:11px;font-weight:800;padding:2px 7px;border-radius:10px;letter-spacing:0.4px;cursor:help; }
+.sig-age-badge.new    { background:#0d3320;color:#2ecc71;border:1px solid #2ecc71; }
+.sig-age-badge.recent { background:#1a2a0a;color:#a8d870;border:1px solid #4a7a2a; }
+.sig-age-badge.stale  { background:#2a1a00;color:#e67e22;border:1px solid #7a4a00; }
+.sig-age-badge.old    { background:#2a0a0a;color:#e74c3c;border:1px solid #7a2020; }
+
 .cond-dot { display:inline-block;width:10px;height:10px;border-radius:50%;margin:0 2px;vertical-align:middle;cursor:help; }
 .cond-dot.cok        { background:#2ecc71;box-shadow:0 0 4px rgba(46,204,113,.5); }
 .cond-dot.cfail      { background:#e74c3c;box-shadow:0 0 4px rgba(231,76,60,.4); }
