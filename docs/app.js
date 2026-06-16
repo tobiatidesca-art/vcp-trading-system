@@ -46,10 +46,13 @@ const DEFAULT_CFG = {
 };
 
 // ── State ─────────────────────────────────────────────────────────
-let _screenerDB  = null;   // {updated, tickers: {AAPL: {d,o,h,l,c,v}}}
+let _screenerDB       = null;   // {updated, tickers: {AAPL: {d,o,h,l,c,v}}}
 let _tickerCache      = {};     // full-history JSON keyed by ticker symbol
 let _signals          = [];     // last screener result
 let _tradeReg         = [];     // all trades reversed — used by chart modal (index = onclick arg)
+let _lastTrades       = [];     // all trades chronological — for filter recomputation
+let _lastResult       = null;   // full metrics result — restored when filter is cleared
+let _lastCfg          = null;   // backtest cfg — needed to recompute metrics on filter
 let _divFilterActive  = false;  // true when "with dividends only" filter is on
 let _equityChart      = null;
 let _modalChart       = null;
@@ -423,6 +426,11 @@ async function runBacktest() {
 
   const result = computeMetrics(finalTrades, cfg.initialCapital, cfg.positionSizeUsd, maxPos);
 
+  // Save for filter recomputation
+  _lastTrades = finalTrades;
+  _lastCfg    = cfg;
+  _lastResult = result;
+
   hide('bt-progress');
   renderResults(result);
 }
@@ -670,13 +678,22 @@ function renderResults(result) {
     return;
   }
 
+  _renderMetricsGrid(result);
+  renderEquityChart(result.equityCurve, result.equityLabels);
+  renderTradesTable(result.trades);
+  renderAnnualTable(result.annualStats);
+  renderMonthlyGrid(result.monthlyStats);
+}
+
+// Renders only the top metrics cards + equity chart (called by filter toggle too)
+function _renderMetricsGrid(result, label) {
   const pnlCls = result.totalPnlUsd >= 0 ? 'green' : 'red';
   const retCls = result.totalReturnPct >= 0 ? 'green' : 'red';
   const ddCls  = result.maxDrawdownPct > 20 ? 'red' : result.maxDrawdownPct > 10 ? 'yellow' : 'green';
   const pfCls  = result.profitFactor >= 1.5 ? 'green' : result.profitFactor >= 1 ? 'yellow' : 'red';
   const wrCls  = result.winRate >= 50 ? 'green' : result.winRate >= 40 ? 'yellow' : 'red';
-
-  setHtml('metrics-grid', `
+  const badge  = label ? `<div style="grid-column:1/-1;font-size:13px;color:#f1c40f;font-weight:700;padding:4px 0 2px">📅 Showing: ${label}</div>` : '';
+  setHtml('metrics-grid', badge + `
     <div class="metric-card"><div class="metric-label">Total P&L</div><div class="metric-value ${pnlCls}">${fmt$(result.totalPnlUsd)}</div></div>
     <div class="metric-card"><div class="metric-label">Total Return</div><div class="metric-value ${retCls}">${fmtPct(result.totalReturnPct)}</div></div>
     <div class="metric-card"><div class="metric-label">Max Drawdown</div><div class="metric-value ${ddCls}">${result.maxDrawdownPct.toFixed(1)}%</div></div>
@@ -690,11 +707,6 @@ function renderResults(result) {
     <div class="metric-card"><div class="metric-label">Expectancy</div><div class="metric-value ${result.expectancyPct >= 0 ? 'green' : 'red'}">${fmtPct(result.expectancyPct)}</div></div>
     <div class="metric-card"><div class="metric-label">Final Capital</div><div class="metric-value ${pnlCls}">${fmt$(result.finalCapital)}</div></div>
   `);
-
-  renderEquityChart(result.equityCurve, result.equityLabels);
-  renderTradesTable(result.trades);
-  renderAnnualTable(result.annualStats);
-  renderMonthlyGrid(result.monthlyStats);
 }
 
 function renderEquityChart(curve, labels) {
@@ -770,12 +782,26 @@ function _renderTradeRows(display) {
   }).join('');
 }
 
-// Toggle "with dividends only" filter
+// Toggle "with dividends only" filter — also updates top metrics + equity chart
 function toggleDivFilter() {
   _divFilterActive = !_divFilterActive;
   _updateDivFilterBtn();
-  const subset = _divFilterActive ? _tradeReg.filter(t => t.hasDividend) : _tradeReg;
-  _renderTradeRows(subset);
+  if (_divFilterActive) {
+    const divTrades = _lastTrades.filter(t => t.hasDividend);
+    const filtered  = computeMetrics(
+      divTrades,
+      _lastResult.initialCapital,
+      _lastCfg.positionSizeUsd,
+      _lastCfg.maxOpenPositions
+    );
+    _renderMetricsGrid(filtered, `Dividend trades only (${divTrades.length} of ${_lastTrades.length})`);
+    renderEquityChart(filtered.equityCurve, filtered.equityLabels);
+    _renderTradeRows(_tradeReg.filter(t => t.hasDividend));
+  } else {
+    _renderMetricsGrid(_lastResult);
+    renderEquityChart(_lastResult.equityCurve, _lastResult.equityLabels);
+    _renderTradeRows(_tradeReg);
+  }
 }
 
 function _updateDivFilterBtn() {
