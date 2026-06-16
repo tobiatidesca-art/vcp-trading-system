@@ -49,6 +49,44 @@
       <div id="market-selector" style="display:flex;gap:8px;flex-wrap:wrap"></div>
     </div>
 
+    <!-- VCP Parameters bar -->
+    <div class="vcp-params-bar">
+      <span class="vcp-params-label">⚙️ VCP:</span>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+
+        <div style="display:flex;align-items:center;gap:4px">
+          <label style="font-size:11px;color:#6a8aaa;white-space:nowrap">Proximity High</label>
+          <input type="number" id="sc-proximity" value="5.0" step="0.5" min="1" max="20"
+                 class="vcp-input" oninput="runScreener()">
+          <span style="font-size:11px;color:#6a8aaa">%</span>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:4px">
+          <label style="font-size:11px;color:#6a8aaa;white-space:nowrap">BB Width Max</label>
+          <input type="number" id="sc-bb-width" value="8.0" step="0.5" min="2" max="25"
+                 class="vcp-input" oninput="runScreener()">
+          <span style="font-size:11px;color:#6a8aaa">%</span>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:4px">
+          <label style="font-size:11px;color:#6a8aaa;white-space:nowrap">Contr. Bars</label>
+          <input type="number" id="sc-bb-bars" value="3" step="1" min="1" max="20"
+                 class="vcp-input" style="width:52px" oninput="runScreener()">
+        </div>
+
+        <div style="display:flex;align-items:center;gap:4px">
+          <label style="font-size:11px;color:#6a8aaa;white-space:nowrap">Vol ×</label>
+          <input type="number" id="sc-vol-mult" value="1.3" step="0.1" min="1.0" max="5.0"
+                 class="vcp-input" style="width:60px" oninput="runScreener()">
+        </div>
+
+        <button class="btn" onclick="resetScreenerParams()"
+                style="font-size:12px;padding:4px 10px;color:#6a8aaa;border-color:#1e3048">↺ Reset</button>
+        <button class="btn" onclick="applyBacktestToScreener()"
+                style="font-size:12px;padding:4px 10px;color:#4db8ff;border-color:#4db8ff">📥 Da Backtest</button>
+      </div>
+    </div>
+
     <div class="stats-bar">
       <div class="stat-card">
         <div class="stat-label">Active Signals</div>
@@ -224,6 +262,10 @@
         </div>
 
         <button class="btn btn-run" onclick="runBacktest()">▶ RUN BACKTEST</button>
+        <button class="btn" onclick="applyBacktestToScreener()"
+                style="width:100%;margin-top:6px;font-size:14px;color:#4db8ff;border-color:#4db8ff;justify-content:center">
+          📡 Applica allo Screener Live
+        </button>
       </div>
 
       <!-- RIGHT: Results -->
