@@ -1071,12 +1071,8 @@ async function openChartModal(ticker, tradeIdx) {
   const closes = raw.c.slice(sliceStart, sliceEnd);
   const labels = raw.d?.slice(sliceStart, sliceEnd) ?? closes.map((_, k) => String(k));
 
-  // ── Reset canvases ────────────────────────────────────────────
-  if (wrap) {
-    wrap.innerHTML = `
-      <canvas id="modal-chart-canvas" style="display:block;height:280px"></canvas>
-      <canvas id="modal-sub-canvas"   style="display:block;height:110px;margin-top:6px"></canvas>`;
-  }
+  // ── Reset canvas ──────────────────────────────────────────────
+  if (wrap) wrap.innerHTML = '<canvas id="modal-chart-canvas"></canvas>';
   const canvas = document.getElementById('modal-chart-canvas');
   if (!canvas) return;
   if (_modalChart) { _modalChart.destroy(); _modalChart = null; }
@@ -1155,51 +1151,7 @@ async function openChartModal(ticker, tradeIdx) {
     });
   }
 
-  // ── Sub-chart: BB Width + Volume ─────────────────────────────
-  const subCanvas = document.getElementById('modal-sub-canvas');
-  if (subCanvas && raw.v) {
-    const bbwFull    = calcBBWidth(raw.c, 20, 2.0);
-    const volMAFull  = calcVolMA(raw.v, 20);
-    const bbwSlice   = bbwFull.slice(sliceStart, sliceEnd);
-    const volSlice   = raw.v.slice(sliceStart, sliceEnd);
-    const volMASlice = volMAFull.slice(sliceStart, sliceEnd);
-
-    let entrySubIdx = -1;
-    if (trade && raw.d) entrySubIdx = raw.d.indexOf(trade.entryDate) - sliceStart;
-
-    const volColors = volSlice.map((_, k) =>
-      k === entrySubIdx ? 'rgba(46,204,113,0.9)' : 'rgba(77,184,255,0.3)'
-    );
-    const bbThresh = _lastCfg?.bbWidthThresholdPct ?? 8.0;
-
-    _subChart = new Chart(subCanvas, {
-      data: { labels, datasets: [
-        { type:'bar',  label:'Volume',     data:volSlice,   backgroundColor:volColors,           yAxisID:'yVol', order:3 },
-        { type:'line', label:'Vol MA 20',  data:volMASlice, borderColor:'rgba(241,196,15,0.75)', yAxisID:'yVol', order:2, borderWidth:1.5, pointRadius:0, fill:false },
-        { type:'line', label:'BB Width %', data:bbwSlice,   borderColor:'#a855f7',               yAxisID:'yBBW', order:1, borderWidth:1.5, pointRadius:0, fill:false },
-        { type:'line', label:'Threshold',  data:bbwSlice.map(() => bbThresh), borderColor:'rgba(168,85,247,0.4)', yAxisID:'yBBW', order:0, borderWidth:1, borderDash:[4,3], pointRadius:0, fill:false },
-      ]},
-      options: {
-        responsive:true, maintainAspectRatio:false, animation:false,
-        plugins: {
-          legend: { display:true, labels:{ color:'#6a8aaa', font:{size:10}, filter: i => i.text !== 'Threshold' } },
-          tooltip: { callbacks: { label(ctx) {
-            if (ctx.dataset.label === 'Volume')     return `Vol: ${(ctx.raw/1e6).toFixed(2)}M`;
-            if (ctx.dataset.label === 'Vol MA 20')  return ctx.raw ? `Vol MA: ${(ctx.raw/1e6).toFixed(2)}M` : null;
-            if (ctx.dataset.label === 'BB Width %') return ctx.raw ? `BB Width: ${ctx.raw.toFixed(2)}%` : null;
-            return null;
-          }}},
-        },
-        scales: {
-          x:    { ticks:{ color:'#6a8aaa', maxTicksLimit:8, font:{size:9} }, grid:{ color:'#1e3050' } },
-          yVol: { type:'linear', position:'left',  grid:{ color:'#1e3050' }, ticks:{ color:'#4db8ff', font:{size:9}, callback: v => (v/1e6).toFixed(1)+'M' } },
-          yBBW: { type:'linear', position:'right', grid:{ display:false },   ticks:{ color:'#a855f7', font:{size:9}, callback: v => v.toFixed(0)+'%' }, min:0 },
-        },
-      },
-    });
-  }
-
-  // ── Build main chart ──────────────────────────────────────────
+  // ── Build chart ───────────────────────────────────────────────
   const hasAnnotations = !!trade || _chartDivs.length > 0;
   _modalChart = new Chart(canvas, {
     type: 'line',
