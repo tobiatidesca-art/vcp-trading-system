@@ -242,7 +242,7 @@ function readScreenerCfg() {
 
 // Copia i parametri VCP dal backtest allo screener e switcha tab
 function applyBacktestToScreener() {
-  const map = { 'sc-bb-width':'bt-bb-width', 'sc-bb-bars':'bt-bb-bars', 'sc-vol-mult':'bt-vol-mult' };
+  const map = { 'sc-proximity':'bt-proximity', 'sc-bb-width':'bt-bb-width', 'sc-bb-bars':'bt-bb-bars', 'sc-vol-mult':'bt-vol-mult' };
   for (const [scId, btId] of Object.entries(map)) {
     const val = document.getElementById(btId)?.value;
     const el  = document.getElementById(scId);
@@ -473,7 +473,7 @@ async function runBacktest() {
     positionSizeUsd:          parseFloat(document.getElementById('bt-position')?.value || 10000),
     maxOpenPositions:         parseInt(document.getElementById('bt-max-pos')?.value    || 5),
     highPeriodDays:           parseInt(document.getElementById('bt-high-period')?.value || 252),
-    proximityThreshold:       5.0,
+    proximityThreshold:       parseFloat(document.getElementById('bt-proximity')?.value || 5.0),
     bbPeriod:                 20,
     bbStdDev:                 2.0,
     bbWidthThresholdPct:      parseFloat(document.getElementById('bt-bb-width')?.value || 8.0),
