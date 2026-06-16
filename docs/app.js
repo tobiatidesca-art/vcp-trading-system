@@ -1131,23 +1131,23 @@ async function openChartModal(ticker, tradeIdx) {
   }
 
   if (_chartDivs.length > 0) {
+    const priceRange = Math.max(...closes) - Math.min(...closes);
     const divData = closes.map((_, k) => {
       const d = _chartDivs.find(x => x.labelIdx === k);
-      return d ? d.price : null;
+      return d ? d.price + priceRange * 0.04 : null;  // 4% above price so non viene coperto da altri marker
     });
     datasets.push({
       label: 'Dividend ▲',
       data: divData,
       showLine: false, fill: false,
-      // upward triangle drawn below price so it sits "under" the candle
       pointStyle:            closes.map((_, k) => _chartDivs.find(x => x.labelIdx === k) ? 'triangle' : 'circle'),
       pointRadius:           closes.map((_, k) => _chartDivs.find(x => x.labelIdx === k) ? 11 : 0),
       pointHoverRadius:      closes.map((_, k) => _chartDivs.find(x => x.labelIdx === k) ? 14 : 0),
       pointBackgroundColor:  '#f1c40f',
       pointBorderColor:      '#000',
       pointBorderWidth:      1.5,
-      rotation:              0,    // triangle pointing up
-      order: 2,
+      rotation:              0,
+      order: 0,  // sopra tutti gli altri marker
     });
   }
 
