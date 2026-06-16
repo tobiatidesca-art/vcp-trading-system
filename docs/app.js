@@ -460,6 +460,31 @@ function checkConditionsFromRaw(ticker, raw, cfg = DEFAULT_CFG) {
   const bbWidthCurrent = bbwArr[i] ?? 0;
   const allPass = c2 && c3;
 
+  // If signal is active, scan backwards to find how many consecutive days it has been on
+  let signalAgeDays = 0, firstSignalDate = dates?.[i] ?? '', firstSignalClose = closes[i];
+  if (allPass) {
+    let j = i - 1;
+    while (j >= Math.max(0, i - 30)) { // cap scan at 30 days back
+      const startHJ = Math.max(0, j - cfg.highPeriodDays + 1);
+      let highNJ = -Infinity;
+      for (let k = startHJ; k <= j; k++) highNJ = Math.max(highNJ, highs[k]);
+      if ((closes[j] - highNJ) / highNJ * 100 < -cfg.proximityThreshold) break;
+      let c2j = true;
+      for (let k = j - cfg.bbContractionBars + 1; k <= j; k++) {
+        if (!bbwArr[k] || bbwArr[k] >= cfg.bbWidthThreshold) { c2j = false; break; }
+      }
+      if (!c2j) break;
+      if (!volMA[j] || volMA[j] <= 0) break;
+      if (volumes[j] / volMA[j] < cfg.volumeMultiplier) break;
+      signalAgeDays++;
+      firstSignalDate  = dates?.[j] ?? firstSignalDate;
+      firstSignalClose = closes[j];
+      j--;
+    }
+  }
+  const priceSinceSignalPct = signalAgeDays > 0
+    ? +((closes[i] - firstSignalClose) / firstSignalClose * 100).toFixed(2) : 0;
+
   return {
     ticker,
     currentPrice:        +closes[i].toFixed(2),
@@ -470,6 +495,7 @@ function checkConditionsFromRaw(ticker, raw, cfg = DEFAULT_CFG) {
     highPeriodPrice:     +highN.toFixed(2),
     signalStrength:      allPass ? classify(distPct, bbWidthCurrent, volRatioVal) : null,
     detectedAt:          dates?.[i] ?? '',
+    signalAgeDays, firstSignalDate, priceSinceSignalPct,
     c1, c2, c3, allPass,
   };
 }
@@ -510,6 +536,23 @@ const STRENGTH_ORDER = { STRONG: 3, MODERATE: 2, WATCH: 1 };
 function sortTable(key) {
   if (_sortKey === key) _sortAsc = !_sortAsc; else { _sortKey = key; _sortAsc = true; }
   renderScreenerTable(_signals);
+}
+
+// Renders signal age badge + price-since-first-signal for the screener Date column
+function renderSignalAge(s) {
+  const date = `<div style="font-size:11px;color:#6a8aaa;margin-bottom:3px">${s.detectedAt}</div>`;
+  if (s.signalAgeDays === 0) {
+    return date + `<span class="sig-age-badge new" title="Segnale rilevato oggi — entrata ottimale: apertura di domani">NUOVO ✦</span>`;
+  }
+  const d   = s.signalAgeDays;
+  const pct = s.priceSinceSignalPct;
+  const ageCls  = d <= 2 ? 'recent' : d <= 5 ? 'stale' : 'old';
+  const pctSign = pct >= 0 ? '+' : '';
+  const pctCls  = pct > 3 ? 'color:#e74c3c' : pct > 1 ? 'color:#e67e22' : 'color:#2ecc71';
+  const tip = `Primo segnale: ${s.firstSignalDate}. Dal 1° giorno il prezzo è variato del ${pctSign}${pct}%. Entrata ottimale: ${d} gg fa.`;
+  return date +
+    `<span class="sig-age-badge ${ageCls}" title="${tip}">${d} gg fa</span>` +
+    `<div style="font-size:11px;${pctCls};margin-top:2px" title="${tip}">${pctSign}${pct}% dal 1° seg.</div>`;
 }
 
 // Quality dot: score 2=strong(green), 1=medium(yellow), 0=weak(orange/at-limit)
@@ -570,7 +613,7 @@ function renderScreenerTable(sigs) {
             ' — verde = > 2.5× (forte spike), giallo = > 1.8×, arancio = al limite soglia')}
         </div>
       </td>
-      <td style="font-size:14px;color:#6a8aaa">${s.detectedAt}</td>
+      <td style="font-size:13px;text-align:center">${renderSignalAge(s)}</td>
       <td style="font-size:13px;text-align:center">${s.daysToNextDiv != null ? `<span style="color:#f1c40f">${s.daysToNextDiv}gg</span><br><span style="color:#a8c0d8;font-size:11px">$${(+s.nextDivAmt).toFixed(2)}</span>` : '<span style="color:#3d5a7a">—</span>'}</td>
     </tr>`;
   }).join('');
