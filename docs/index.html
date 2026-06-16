@@ -165,6 +165,38 @@
       </table>
     </div>
 
+    <!-- Near Signal section: tickers in price zone but missing 1-2 conditions -->
+    <div id="near-signal-section" style="display:none;margin-top:28px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <h4 style="font-size:14px;font-weight:800;color:#e67e22;text-transform:uppercase;letter-spacing:0.6px;margin:0">
+          📋 In Formazione — Condizioni Parziali
+        </h4>
+        <span id="near-count" style="background:#2a1800;color:#e67e22;font-size:12px;padding:2px 8px;border-radius:10px;font-weight:700">0</span>
+      </div>
+      <div style="font-size:12px;color:#6a8aaa;margin-bottom:8px">
+        Titoli già nella zona di prezzo (C1 ✓ prossimità al massimo) ma con una o più condizioni ancora mancanti.
+        Ordine: prima quelli più vicini al segnale completo.
+        <span style="color:#2ecc71">●</span> superata &nbsp;
+        <span style="color:#e74c3c">●</span> mancante
+      </div>
+      <div class="table-wrapper" style="max-height:320px;overflow-y:auto">
+        <table>
+          <thead>
+            <tr>
+              <th onclick="">Ticker</th>
+              <th>Prezzo</th>
+              <th title="Distanza dal massimo del periodo — C1 sempre superata">Dist. High ✓</th>
+              <th title="Bollinger Band Width — deve essere sotto soglia per K barre consecutive (C2)">BB Width (C2)</th>
+              <th title="Volume oggi vs media 20gg — deve superare il moltiplicatore (C3)">Vol × (C3)</th>
+              <th title="C1=Prossimità al massimo | C2=BB contratta | C3=Volume spike" style="text-align:center">C1 | C2 | C3</th>
+              <th>Manca ancora</th>
+            </tr>
+          </thead>
+          <tbody id="near-signal-body"></tbody>
+        </table>
+      </div>
+    </div>
+
   </div><!-- /tab-screener -->
 
 
