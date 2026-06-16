@@ -5,28 +5,66 @@
    ================================================================= */
 'use strict';
 
-// ── Watchlist ─────────────────────────────────────────────────────
-const WATCHLIST = [
-  "AAPL","MSFT","GOOGL","AMZN","META","NVDA","TSLA","AVGO","ORCL","AMD",
-  "INTC","QCOM","TXN","MU","AMAT","LRCX","KLAC","MRVL","ADSK","CRM",
-  "ADBE","NOW","INTU","PANW","FTNT","SNPS","CDNS","DDOG","NET","CRWD",
-  "JPM","BAC","WFC","GS","MS","C","AXP","BLK","SCHW","COF",
-  "BX","CB","PGR","TRV","AFL","ALL","AIG","MET","SPGI","MCO",
-  "ICE","CME","MSCI","V","MA","PYPL","FDS","BR","ALLY","SYF",
-  "JNJ","LLY","ABBV","MRK","PFE","AMGN","GILD","REGN","VRTX","BMY",
-  "TMO","ABT","MDT","SYK","BSX","EW","ISRG","DHR","IQV","A",
-  "CVS","UNH","ELV","CNC","HUM","CI","MCK","CAH","ABC","DXCM",
-  "PG","KO","PEP","MCD","SBUX","NKE","COST","WMT","TGT","HD",
-  "LOW","TJX","ROST","DG","DLTR","EL","CL","CHD","KMB","GIS",
-  "DIS","NFLX","CMCSA","CHTR","LYV","BKNG","MAR","HLT","RCL","CCL",
-  "CAT","DE","HON","RTX","LMT","GD","NOC","BA","EMR","ETN",
-  "ITW","PH","ROK","IR","AME","FTV","CARR","OTIS","TT","XYL",
-  "XOM","CVX","COP","EOG","OXY","MPC","PSX","VLO","HES","SLB",
-  "LIN","APD","SHW","PPG","ECL","IFF","ALB","FCX","NEM","NUE",
-  "AMT","PLD","CCI","EQIX","DLR","SPG","O","WELL","VTR","AVB",
-  "NEE","DUK","SO","D","EXC","AEP","SRE","XEL","WEC","ES",
-  "UBER","ABNB","SHOP","SQ","SOFI","PLTR","ZS","OKTA","MDB","TTD",
-];
+// ── Market definitions ────────────────────────────────────────────
+const MARKET_DEFS = {
+  US: { label: '🇺🇸 USA',         tickers: [
+    "AAPL","MSFT","GOOGL","AMZN","META","NVDA","TSLA","AVGO","ORCL","AMD",
+    "INTC","QCOM","TXN","MU","AMAT","LRCX","KLAC","MRVL","ADSK","CRM",
+    "ADBE","NOW","INTU","PANW","FTNT","SNPS","CDNS","DDOG","NET","CRWD",
+    "JPM","BAC","WFC","GS","MS","C","AXP","BLK","SCHW","COF",
+    "BX","CB","PGR","TRV","AFL","ALL","AIG","MET","SPGI","MCO",
+    "ICE","CME","MSCI","V","MA","PYPL","FDS","BR","ALLY","SYF",
+    "JNJ","LLY","ABBV","MRK","PFE","AMGN","GILD","REGN","VRTX","BMY",
+    "TMO","ABT","MDT","SYK","BSX","EW","ISRG","DHR","IQV","A",
+    "CVS","UNH","ELV","CNC","HUM","CI","MCK","CAH","ABC","DXCM",
+    "PG","KO","PEP","MCD","SBUX","NKE","COST","WMT","TGT","HD",
+    "LOW","TJX","ROST","DG","DLTR","EL","CL","CHD","KMB","GIS",
+    "DIS","NFLX","CMCSA","CHTR","LYV","BKNG","MAR","HLT","RCL","CCL",
+    "CAT","DE","HON","RTX","LMT","GD","NOC","BA","EMR","ETN",
+    "ITW","PH","ROK","IR","AME","FTV","CARR","OTIS","TT","XYL",
+    "XOM","CVX","COP","EOG","OXY","MPC","PSX","VLO","HES","SLB",
+    "LIN","APD","SHW","PPG","ECL","IFF","ALB","FCX","NEM","NUE",
+    "AMT","PLD","CCI","EQIX","DLR","SPG","O","WELL","VTR","AVB",
+    "NEE","DUK","SO","D","EXC","AEP","SRE","XEL","WEC","ES",
+    "UBER","ABNB","SHOP","SQ","SOFI","PLTR","ZS","OKTA","MDB","TTD",
+  ]},
+  IT: { label: '🇮🇹 Italy',       tickers: [
+    "ENI.MI","ENEL.MI","ISP.MI","UCG.MI","STM.MI","G.MI","PRY.MI",
+    "MB.MI","LDO.MI","RACE.MI","MONC.MI","FBK.MI","BAMI.MI","BPE.MI",
+    "NEXI.MI","PIRC.MI","TRN.MI","SRG.MI","A2A.MI","HER.MI","SPM.MI",
+    "TEN.MI","AZM.MI","DIA.MI","AMP.MI","REC.MI","BC.MI","BZU.MI",
+    "STLAM.MI","TIT.MI","PST.MI","ERG.MI","INWIT.MI","IP.MI",
+    "SFER.MI","BMPS.MI",
+  ]},
+  DE: { label: '🇩🇪 Germany',     tickers: [
+    "SAP.DE","SIE.DE","ALV.DE","BMW.DE","MBG.DE","BAYN.DE","BAS.DE",
+    "DTE.DE","DB1.DE","MUV2.DE","VOW3.DE","ADS.DE","RWE.DE","HEN3.DE",
+    "EOAN.DE","DHL.DE","DBK.DE","IFX.DE","ENR.DE","MTX.DE",
+    "CON.DE","MRK.DE","FRE.DE","FME.DE","BEI.DE","SHL.DE","P911.DE",
+    "PAH3.DE","SY1.DE","PUM.DE","CBK.DE","ZAL.DE","VNA.DE",
+    "QIA.DE","AFX.DE","HEI.DE",
+  ]},
+  FR: { label: '🇫🇷 France',      tickers: [
+    "MC.PA","AIR.PA","TTE.PA","SAN.PA","BNP.PA","OR.PA","SU.PA",
+    "AI.PA","RI.PA","GLE.PA","ACA.PA","CAP.PA","CS.PA","DG.PA",
+    "EL.PA","HO.PA","KER.PA","LR.PA","ORA.PA","PUB.PA","RMS.PA",
+    "RNO.PA","SAF.PA","SGO.PA","VIE.PA","VIV.PA","DSY.PA","ENGI.PA",
+    "ERF.PA","CA.PA","BVI.PA","SW.PA","EN.PA","ML.PA","WLN.PA",
+  ]},
+  ES: { label: '🇪🇸 Spain',       tickers: [
+    "SAN.MC","ITX.MC","IBE.MC","TEF.MC","BBVA.MC","REP.MC","ACS.MC",
+    "FER.MC","AENA.MC","REE.MC","ENG.MC","MAP.MC","NTGY.MC","SAB.MC",
+    "BKT.MC","ELE.MC","CLNX.MC","IAG.MC","IDR.MC","MRL.MC","CABK.MC",
+    "GRF.MC","ACX.MC","VIS.MC","ANA.MC","LOG.MC","COL.MC","CIE.MC",
+    "UNI.MC","PHM.MC",
+  ]},
+  NL: { label: '🇳🇱 Netherlands', tickers: [
+    "ASML.AS","HEIA.AS","ING.AS","PHIA.AS","SHELL.AS","UNA.AS",
+    "ABN.AS","AH.AS","AKZA.AS","ASRNL.AS","NN.AS","PRX.AS",
+    "RAND.AS","REN.AS","WKL.AS","DSMN.AS","IMCD.AS","ADYEN.AS",
+    "AGN.AS","BESI.AS","KPN.AS","SBM.AS","URW.AS","VPK.AS","OCI.AS",
+  ]},
+};
 
 // ── GitHub repo (for Actions dispatch) ───────────────────────────
 const GH_OWNER = 'tobiatidesca-art';
@@ -46,7 +84,8 @@ const DEFAULT_CFG = {
 };
 
 // ── State ─────────────────────────────────────────────────────────
-let _screenerDB       = null;   // {updated, tickers: {AAPL: {d,o,h,l,c,v}}}
+let _activeMarkets    = ['US']; // market codes currently selected
+let _screenerDB       = null;   // merged screener data for active markets
 let _tickerCache      = {};     // full-history JSON keyed by ticker symbol
 let _signals          = [];     // last screener result
 let _tradeReg         = [];     // all trades reversed — used by chart modal (index = onclick arg)
@@ -65,7 +104,8 @@ let _sortAsc          = true;
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initClockET();
-  renderChips(WATCHLIST);
+  renderMarketSelector();
+  renderChips([]);
   const endEl = document.getElementById('bt-end');
   if (endEl) endEl.value = new Date().toISOString().split('T')[0];
   loadScreenerDB();
@@ -125,16 +165,50 @@ function toggleChips() {
   document.getElementById('chips-wrap')?.classList.toggle('open');
 }
 
-// ── Load screener JSON ────────────────────────────────────────────
+// ── Market selector ───────────────────────────────────────────────
+function renderMarketSelector() {
+  const el = document.getElementById('market-selector');
+  if (!el) return;
+  el.innerHTML = Object.entries(MARKET_DEFS).map(([code, def]) => {
+    const on = _activeMarkets.includes(code);
+    return `<button class="market-btn${on ? ' active' : ''}" onclick="toggleMarket('${code}')" title="${on ? 'Deselect' : 'Add'} ${code}">${def.label}</button>`;
+  }).join('');
+}
+
+function toggleMarket(code) {
+  if (_activeMarkets.includes(code)) {
+    if (_activeMarkets.length === 1) { showToast('At least one market must be selected', 'error'); return; }
+    _activeMarkets = _activeMarkets.filter(m => m !== code);
+  } else {
+    _activeMarkets = [..._activeMarkets, code];
+  }
+  renderMarketSelector();
+  loadScreenerDB();
+}
+
+// ── Load screener JSON (one file per active market, merged) ───────
 async function loadScreenerDB() {
   setDataBadge('Loading data…', '');
   try {
-    const resp = await fetch('data/screener.json');
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    _screenerDB = await resp.json();
-    const count = Object.keys(_screenerDB.tickers || {}).length;
+    const results = await Promise.all(
+      _activeMarkets.map(code =>
+        fetch(`data/screener_${code}.json`).then(r => r.ok ? r.json() : null).catch(() => null)
+      )
+    );
+    const merged = { updated: null, tickers: {} };
+    for (const data of results) {
+      if (!data) continue;
+      if (!merged.updated || data.updated > merged.updated) merged.updated = data.updated;
+      Object.assign(merged.tickers, data.tickers);
+    }
+    _screenerDB = merged;
+    const count = Object.keys(_screenerDB.tickers).length;
     if (count === 0) { showNoData(); return; }
-    setDataBadge(`Data: ${_screenerDB.updated} — ${count} tickers`, 'ok');
+    const mktLabel = _activeMarkets.map(c => MARKET_DEFS[c].label).join(' + ');
+    setDataBadge(`Data: ${_screenerDB.updated} — ${count} tickers (${mktLabel})`, 'ok');
+    renderChips(Object.keys(_screenerDB.tickers));
+    setText('stat-watchlist', count);
+    setText('chips-count', count);
     runScreener();
   } catch {
     setDataBadge('Data not available', 'error');
@@ -354,7 +428,7 @@ async function runBacktest() {
 
   const upper = tickersRaw.toUpperCase();
   const tickers = (!tickersRaw || upper.includes('ALL') || upper.includes('TUTTI'))
-    ? [...WATCHLIST]
+    ? Object.keys(_screenerDB?.tickers || {})
     : tickersRaw.split(',').map(t => t.trim().toUpperCase()).filter(Boolean);
 
   const cfg = {
