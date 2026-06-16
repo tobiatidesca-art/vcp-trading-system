@@ -199,7 +199,7 @@ select option { background:var(--bg-card);color:var(--white); }
 .modal-yf-link:hover { border-color:var(--blue);background:rgba(77,184,255,0.1); }
 .modal-close-btn { background:none;border:2px solid var(--border);border-radius:7px;color:#a8c0d8;font-size:18px;width:36px;height:36px;cursor:pointer;transition:var(--trans);display:flex;align-items:center;justify-content:center; }
 .modal-close-btn:hover { border-color:var(--red);color:var(--red); }
-.modal-chart-wrap { padding:16px 20px 8px; }
+.modal-chart-wrap { padding:16px 20px;height:420px; }
 .modal-trade-info { padding:10px 24px 16px;border-top:1px solid var(--border-dim);font-size:14px;color:#a8c0d8;line-height:1.8; }
 
 ::-webkit-scrollbar       { width:7px;height:7px; }
