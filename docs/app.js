@@ -234,16 +234,17 @@ function showNoData() {
 function readScreenerCfg() {
   return {
     ...DEFAULT_CFG,
-    proximityThreshold: parseFloat(document.getElementById('sc-proximity')?.value) || 5.0,
-    bbWidthThreshold:   parseFloat(document.getElementById('sc-bb-width')?.value)  || 8.0,
-    bbContractionBars:  parseInt(document.getElementById('sc-bb-bars')?.value)     || 3,
-    volumeMultiplier:   parseFloat(document.getElementById('sc-vol-mult')?.value)  || 1.3,
+    proximityThreshold: parseFloat(document.getElementById('sc-proximity')?.value)   || 5.0,
+    bbWidthThreshold:   parseFloat(document.getElementById('sc-bb-width')?.value)    || 8.0,
+    bbContractionBars:  parseInt(document.getElementById('sc-bb-bars')?.value)       || 3,
+    volumeMultiplier:   parseFloat(document.getElementById('sc-vol-mult')?.value)    || 1.3,
+    minSignalStrength:  document.getElementById('sc-min-strength')?.value            || 'WATCH',
   };
 }
 
 // Copia i parametri VCP dal backtest allo screener e switcha tab
 function applyBacktestToScreener() {
-  const map = { 'sc-proximity':'bt-proximity', 'sc-bb-width':'bt-bb-width', 'sc-bb-bars':'bt-bb-bars', 'sc-vol-mult':'bt-vol-mult' };
+  const map = { 'sc-proximity':'bt-proximity', 'sc-bb-width':'bt-bb-width', 'sc-bb-bars':'bt-bb-bars', 'sc-vol-mult':'bt-vol-mult', 'sc-min-strength':'bt-min-strength' };
   for (const [scId, btId] of Object.entries(map)) {
     const val = document.getElementById(btId)?.value;
     const el  = document.getElementById(scId);
@@ -256,7 +257,7 @@ function applyBacktestToScreener() {
 
 // Reset parametri screener ai valori di default
 function resetScreenerParams() {
-  const defs = { 'sc-proximity': 5.0, 'sc-bb-width': 8.0, 'sc-bb-bars': 3, 'sc-vol-mult': 1.3 };
+  const defs = { 'sc-proximity': 5.0, 'sc-bb-width': 8.0, 'sc-bb-bars': 3, 'sc-vol-mult': 1.3, 'sc-min-strength': 'WATCH' };
   for (const [id, val] of Object.entries(defs)) {
     const el = document.getElementById(id);
     if (el) el.value = val;
@@ -274,8 +275,14 @@ function runScreener() {
     if (!raw?.c || raw.c.length < cfg.minBars) continue;
     const check = checkConditionsFromRaw(ticker, raw, cfg);
     if (!check) continue;            // not in price zone
-    if (check.allPass) _signals.push(check);
-    else               _nearSignals.push(check);
+    if (check.allPass) {
+      if (meetsMinStrength(check.signalStrength, cfg.minSignalStrength))
+        _signals.push(check);
+      else
+        _nearSignals.push({ ...check, belowMinStrength: true });
+    } else {
+      _nearSignals.push(check);
+    }
   }
   renderScreenerTable(_signals);
   renderNearSignalTable(_nearSignals);
@@ -467,27 +474,34 @@ function checkConditionsFromRaw(ticker, raw, cfg = DEFAULT_CFG) {
   };
 }
 
-// Check VCP at an arbitrary bar index i within pre-computed indicator arrays
+// Returns signal strength ('STRONG'/'MODERATE'/'WATCH') or null if conditions not met
 function isSignalAt(closes, highs, volumes, bbwArr, volMAArr, i, cfg) {
   const minRequired = Math.max(cfg.minBars, cfg.highPeriodDays + cfg.bbContractionBars);
-  if (i < minRequired) return false;
+  if (i < minRequired) return null;
 
   // C1
   const startH = Math.max(0, i - cfg.highPeriodDays + 1);
   let highN = -Infinity;
   for (let k = startH; k <= i; k++) highN = Math.max(highN, highs[k]);
-  if ((closes[i] - highN) / highN * 100 < -cfg.proximityThreshold) return false;
+  const distPct = (closes[i] - highN) / highN * 100;
+  if (distPct < -cfg.proximityThreshold) return null;
 
   // C2
   for (let k = i - cfg.bbContractionBars + 1; k <= i; k++) {
-    if (bbwArr[k] === null || bbwArr[k] >= cfg.bbWidthThreshold) return false;
+    if (bbwArr[k] === null || bbwArr[k] >= cfg.bbWidthThreshold) return null;
   }
 
   // C3
-  if (volMAArr[i] === null || volMAArr[i] <= 0) return false;
-  if (volumes[i] / volMAArr[i] < cfg.volumeMultiplier) return false;
+  if (volMAArr[i] === null || volMAArr[i] <= 0) return null;
+  const volRatio = volumes[i] / volMAArr[i];
+  if (volRatio < cfg.volumeMultiplier) return null;
 
-  return true;
+  return classify(distPct, bbwArr[i] ?? 0, volRatio);
+}
+
+// True if detected strength meets or exceeds the required minimum
+function meetsMinStrength(strength, minStrength = 'WATCH') {
+  return (STRENGTH_ORDER[strength] || 0) >= (STRENGTH_ORDER[minStrength] || 1);
 }
 
 // ── Screener table ────────────────────────────────────────────────
@@ -579,14 +593,35 @@ function renderNearSignalTable(sigs) {
 
   const dot = (ok, label) =>
     `<span class="cond-dot ${ok ? 'cok' : 'cfail'}" title="${label}"></span>`;
+  const minStr = document.getElementById('sc-min-strength')?.value || 'WATCH';
 
   tbody.innerHTML = sorted.map(s => {
+    const distCls = s.distanceFromHighPct >= 0 ? 'positive' : s.distanceFromHighPct > -2 ? 'yellow' : 'neutral';
+
+    if (s.belowMinStrength) {
+      // Tutte le condizioni soddisfatte ma qualità sotto la soglia richiesta
+      const bbCls2  = s.bbWidthPct < 4.0 ? 'positive' : s.bbWidthPct < 5.5 ? 'yellow' : 'neutral';
+      const volCls2 = s.volumeRatio > 1.8 ? 'positive' : 'yellow';
+      return `<tr style="opacity:0.75">
+        <td class="ticker-cell"><span style="cursor:pointer;color:#4db8ff" onclick="openChartModal('${s.ticker}',null)">${s.ticker}</span></td>
+        <td class="price-cell">$${s.currentPrice.toFixed(2)}</td>
+        <td class="${distCls}">${s.distanceFromHighPct >= 0 ? '+' : ''}${s.distanceFromHighPct.toFixed(2)}%</td>
+        <td class="${bbCls2}">${s.bbWidthPct.toFixed(2)}%</td>
+        <td class="${volCls2}">${s.volumeRatio.toFixed(2)}×</td>
+        <td style="text-align:center;white-space:nowrap">
+          ${condQualDot(2,'C1 ✓')}${condQualDot(2,'C2 ✓')}${condQualDot(2,'C3 ✓')}
+        </td>
+        <td style="font-size:12px;color:#f1c40f;white-space:nowrap">
+          Segnale <strong>${s.signalStrength}</strong> — soglia min: <strong>${minStr}</strong>
+        </td>
+      </tr>`;
+    }
+
     const missing = [];
     if (!s.c2) missing.push('BB contratta');
     if (!s.c3) missing.push('Volume spike');
-    const distCls = s.distanceFromHighPct >= 0 ? 'positive' : s.distanceFromHighPct > -2 ? 'yellow' : 'neutral';
-    const bbCls   = s.c2 ? 'positive' : 'negative';
-    const volCls  = s.c3 ? 'positive' : 'negative';
+    const bbCls  = s.c2 ? 'positive' : 'negative';
+    const volCls = s.c3 ? 'positive' : 'negative';
     return `<tr>
       <td class="ticker-cell"><span style="cursor:pointer;color:#4db8ff" onclick="openChartModal('${s.ticker}',null)">${s.ticker}</span></td>
       <td class="price-cell">$${s.currentPrice.toFixed(2)}</td>
@@ -637,6 +672,7 @@ async function runBacktest() {
     useTrailingStop:          document.getElementById('bt-trailing')?.checked ?? true,
     maxHoldingDays:           parseInt(document.getElementById('bt-maxhold')?.value    || 60),
     entrySlippagePct:         parseFloat(document.getElementById('bt-slippage')?.value ?? 0.10),
+    minSignalStrength:        document.getElementById('bt-min-strength')?.value || 'WATCH',
     minBars:                  Math.max(200, parseInt(document.getElementById('bt-high-period')?.value || 252) + 30),
   };
 
@@ -739,7 +775,8 @@ function runTickerBacktest(ticker, raw, cfg) {
     const curOpen = opens[i], curHigh = highs[i], curLow = lows[i], curClose = closes[i];
 
     if (!inPos) {
-      if (isSignalAt(closes, highs, volumes, bbwArr, volMA, i, scanCfg) && i + 1 <= endIdx) {
+      const sigStr = isSignalAt(closes, highs, volumes, bbwArr, volMA, i, scanCfg);
+      if (sigStr && meetsMinStrength(sigStr, cfg.minSignalStrength) && i + 1 <= endIdx) {
         const slipMult = 1 + (cfg.entrySlippagePct || 0) / 100;
         entryPx = opens[i + 1] * slipMult;
         shares  = entryPx > 0 ? Math.floor(cfg.positionSizeUsd / entryPx) : 0;
