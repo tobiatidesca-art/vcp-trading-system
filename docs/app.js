@@ -279,6 +279,40 @@ function runScreener() {
   setText('stat-moderate', _signals.filter(s => s.signalStrength === 'MODERATE').length);
   setText('stat-watch',    _signals.filter(s => s.signalStrength === 'WATCH').length);
   setText('last-update-time', _screenerDB.updated);
+  enrichSignalsWithDivs();
+}
+
+function computeDaysToNextDiv(divs) {
+  if (!divs?.d?.length || divs.d.length < 2) return null;
+  const dates = divs.d.slice(-4).map(d => new Date(d + 'T00:00:00'));
+  const amts  = divs.a.slice(-4);
+  const intervals = [];
+  for (let k = 1; k < dates.length; k++)
+    intervals.push((dates[k] - dates[k-1]) / 86400000);
+  const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let next = new Date(dates[dates.length - 1]);
+  while (next <= today) next = new Date(next.getTime() + avg * 86400000);
+  return { days: Math.round((next - today) / 86400000), amt: amts[amts.length - 1] };
+}
+
+async function enrichSignalsWithDivs() {
+  if (!_signals.length) return;
+  await Promise.all(_signals.map(async sig => {
+    try {
+      if (!_tickerCache[sig.ticker]?.divs) {
+        const resp = await fetch(`data/${sig.ticker}.json`);
+        if (resp.ok) _tickerCache[sig.ticker] = await resp.json();
+      }
+      const raw = _tickerCache[sig.ticker];
+      if (raw?.divs) {
+        const nd = computeDaysToNextDiv(raw.divs);
+        sig.daysToNextDiv = nd?.days ?? null;
+        sig.nextDivAmt    = nd?.amt  ?? null;
+      }
+    } catch { /* non-critical */ }
+  }));
+  renderScreenerTable(_signals);
 }
 
 function triggerRefresh() { loadScreenerDB(); }
@@ -417,7 +451,7 @@ function renderScreenerTable(sigs) {
   if (!tbody) return;
 
   if (!sigs?.length) {
-    tbody.innerHTML = `<tr><td colspan="8">
+    tbody.innerHTML = `<tr><td colspan="9">
       <div class="empty-state">
         <div class="icon">🔍</div>
         <p>No VCP signals found in today's data</p>
@@ -430,6 +464,11 @@ function renderScreenerTable(sigs) {
     let va = a[_sortKey], vb = b[_sortKey];
     if (_sortKey === 'signalStrength') { va = STRENGTH_ORDER[a.signalStrength] || 0; vb = STRENGTH_ORDER[b.signalStrength] || 0; }
     if (_sortKey === 'ticker') return _sortAsc ? a.ticker.localeCompare(b.ticker) : b.ticker.localeCompare(a.ticker);
+    if (_sortKey === 'daysToNextDiv') {
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+    }
     return _sortAsc ? va - vb : vb - va;
   });
 
@@ -447,6 +486,7 @@ function renderScreenerTable(sigs) {
           <div class="volume-bar" style="width:${barW}px"></div></div></td>
       <td><span class="badge badge-${s.signalStrength}">${s.signalStrength}</span></td>
       <td style="font-size:14px;color:#6a8aaa">${s.detectedAt}</td>
+      <td style="font-size:13px;text-align:center">${s.daysToNextDiv != null ? `<span style="color:#f1c40f">${s.daysToNextDiv}gg</span><br><span style="color:#a8c0d8;font-size:11px">$${(+s.nextDivAmt).toFixed(2)}</span>` : '<span style="color:#3d5a7a">—</span>'}</td>
     </tr>`;
   }).join('');
 }
