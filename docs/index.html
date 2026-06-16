@@ -43,6 +43,12 @@
   <!-- ══════════════ TAB 1: LIVE SCREENER ══════════════════ -->
   <div class="tab-content active" id="tab-screener">
 
+    <!-- Market selector -->
+    <div class="market-bar">
+      <span class="market-bar-label">Markets:</span>
+      <div id="market-selector" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+    </div>
+
     <div class="stats-bar">
       <div class="stat-card">
         <div class="stat-label">Active Signals</div>
@@ -62,10 +68,10 @@
       </div>
       <div class="stat-card">
         <div class="stat-label">Monitored Tickers</div>
-        <div class="stat-value" id="stat-watchlist">200</div>
+        <div class="stat-value" id="stat-watchlist">—</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">US Market</div>
+        <div class="stat-label">Market</div>
         <div class="stat-value" id="stat-market">—</div>
       </div>
     </div>
