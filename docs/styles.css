@@ -69,6 +69,13 @@ main { padding:24px 28px;max-width:1700px;margin:0 auto; }
 .stat-value.red    { color:var(--red); }
 
 .toolbar { display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap; }
+
+/* ── Market selector bar ─────────────────────────────────────── */
+.market-bar { display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;padding:12px 16px;background:var(--bg-card);border:2px solid var(--border);border-radius:var(--radius); }
+.market-bar-label { font-size:13px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:0.7px;white-space:nowrap; }
+.market-btn { padding:6px 14px;font-size:14px;font-weight:600;border-radius:6px;border:2px solid var(--border);background:transparent;color:var(--gray2);cursor:pointer;transition:var(--trans); }
+.market-btn:hover { border-color:var(--blue);color:var(--blue); }
+.market-btn.active { border-color:var(--green);color:var(--green);background:rgba(46,204,113,0.08); }
 .btn { display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:8px;border:2px solid var(--border);cursor:pointer;font-size:17px;font-weight:600;background:var(--bg-card);color:var(--gray1);transition:var(--trans); }
 .btn:hover { border-color:var(--blue);color:var(--blue); }
 .btn-primary { background:var(--green);border-color:var(--green);color:#000;font-weight:800;font-size:17px; }
