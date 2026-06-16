@@ -87,7 +87,8 @@ const DEFAULT_CFG = {
 let _activeMarkets    = ['US']; // market codes currently selected
 let _screenerDB       = null;   // merged screener data for active markets
 let _tickerCache      = {};     // full-history JSON keyed by ticker symbol
-let _signals          = [];     // last screener result
+let _signals          = [];     // last screener result (all 3 conditions met)
+let _nearSignals      = [];     // C1 met but not all conditions (near signal)
 let _tradeReg         = [];     // all trades reversed — used by chart modal (index = onclick arg)
 let _lastTrades       = [];     // all trades chronological — for filter recomputation
 let _lastResult       = null;   // full metrics result — restored when filter is cleared
@@ -267,13 +268,17 @@ function resetScreenerParams() {
 function runScreener() {
   if (!_screenerDB) return;
   const cfg = readScreenerCfg();
-  _signals = [];
+  _signals     = [];
+  _nearSignals = [];
   for (const [ticker, raw] of Object.entries(_screenerDB.tickers || {})) {
     if (!raw?.c || raw.c.length < cfg.minBars) continue;
-    const sig = detectSignalFromRaw(ticker, raw, cfg);
-    if (sig) _signals.push(sig);
+    const check = checkConditionsFromRaw(ticker, raw, cfg);
+    if (!check) continue;            // not in price zone
+    if (check.allPass) _signals.push(check);
+    else               _nearSignals.push(check);
   }
   renderScreenerTable(_signals);
+  renderNearSignalTable(_nearSignals);
   setText('stat-total',    _signals.length);
   setText('stat-strong',   _signals.filter(s => s.signalStrength === 'STRONG').length);
   setText('stat-moderate', _signals.filter(s => s.signalStrength === 'MODERATE').length);
@@ -415,6 +420,53 @@ function detectSignalFromRaw(ticker, raw, cfg=DEFAULT_CFG) {
   };
 }
 
+// Evaluate all 3 VCP conditions individually — returns null only if not in price zone (C1 fails)
+// Returns an object with c1/c2/c3 flags + indicator values for all tickers in proximity
+function checkConditionsFromRaw(ticker, raw, cfg = DEFAULT_CFG) {
+  const { c: closes, h: highs, l: lows, v: volumes, d: dates } = raw;
+  const n = closes.length;
+  const i = n - 1;
+  if (n < cfg.minBars) return null;
+
+  // C1: proximity to N-day high
+  const startH = Math.max(0, i - cfg.highPeriodDays + 1);
+  let highN = -Infinity;
+  for (let k = startH; k <= i; k++) highN = Math.max(highN, highs[k]);
+  const distPct = (closes[i] - highN) / highN * 100;
+  const c1 = distPct >= -cfg.proximityThreshold;
+  if (!c1) return null; // outside price zone — not even a near signal
+
+  // C2: BB contraction for K consecutive bars
+  const nStd  = cfg.bbStd ?? cfg.bbStdDev ?? 2.0;
+  const bbwArr = calcBBWidth(closes, cfg.bbPeriod, nStd);
+  let c2 = true;
+  for (let k = i - cfg.bbContractionBars + 1; k <= i; k++) {
+    if (bbwArr[k] === null || bbwArr[k] >= cfg.bbWidthThreshold) { c2 = false; break; }
+  }
+
+  // C3: volume spike vs 20-day MA
+  const volMA = calcVolMA(volumes);
+  const volRatioVal = (volMA[i] != null && volMA[i] > 0) ? volumes[i] / volMA[i] : 0;
+  const c3 = volRatioVal >= cfg.volumeMultiplier;
+
+  const atrArr = calcATR(highs, lows, closes, cfg.atrPeriod);
+  const bbWidthCurrent = bbwArr[i] ?? 0;
+  const allPass = c2 && c3;
+
+  return {
+    ticker,
+    currentPrice:        +closes[i].toFixed(2),
+    distanceFromHighPct: +distPct.toFixed(2),
+    bbWidthPct:          +bbWidthCurrent.toFixed(2),
+    atr14:               +(atrArr[i] ?? 0).toFixed(2),
+    volumeRatio:         +volRatioVal.toFixed(2),
+    highPeriodPrice:     +highN.toFixed(2),
+    signalStrength:      allPass ? classify(distPct, bbWidthCurrent, volRatioVal) : null,
+    detectedAt:          dates?.[i] ?? '',
+    c1, c2, c3, allPass,
+  };
+}
+
 // Check VCP at an arbitrary bar index i within pre-computed indicator arrays
 function isSignalAt(closes, highs, volumes, bbwArr, volMAArr, i, cfg) {
   const minRequired = Math.max(cfg.minBars, cfg.highPeriodDays + cfg.bbContractionBars);
@@ -489,6 +541,47 @@ function renderScreenerTable(sigs) {
       <td style="font-size:13px;text-align:center">${s.daysToNextDiv != null ? `<span style="color:#f1c40f">${s.daysToNextDiv}gg</span><br><span style="color:#a8c0d8;font-size:11px">$${(+s.nextDivAmt).toFixed(2)}</span>` : '<span style="color:#3d5a7a">—</span>'}</td>
     </tr>`;
   }).join('');
+}
+
+function renderNearSignalTable(sigs) {
+  const section = document.getElementById('near-signal-section');
+  const tbody   = document.getElementById('near-signal-body');
+  if (!tbody) return;
+  if (!sigs?.length) { if (section) section.style.display = 'none'; return; }
+  if (section) section.style.display = '';
+
+  // Sort: most conditions met first, then closest to high
+  const sorted = [...sigs].sort((a, b) => {
+    const sa = (a.c2 ? 1 : 0) + (a.c3 ? 1 : 0);
+    const sb = (b.c2 ? 1 : 0) + (b.c3 ? 1 : 0);
+    if (sb !== sa) return sb - sa;
+    return b.distanceFromHighPct - a.distanceFromHighPct;
+  });
+
+  const dot = (ok, label) =>
+    `<span class="cond-dot ${ok ? 'cok' : 'cfail'}" title="${label}"></span>`;
+
+  tbody.innerHTML = sorted.map(s => {
+    const missing = [];
+    if (!s.c2) missing.push('BB contratta');
+    if (!s.c3) missing.push('Volume spike');
+    const distCls = s.distanceFromHighPct >= 0 ? 'positive' : s.distanceFromHighPct > -2 ? 'yellow' : 'neutral';
+    const bbCls   = s.c2 ? 'positive' : 'negative';
+    const volCls  = s.c3 ? 'positive' : 'negative';
+    return `<tr>
+      <td class="ticker-cell"><span style="cursor:pointer;color:#4db8ff" onclick="openChartModal('${s.ticker}',null)">${s.ticker}</span></td>
+      <td class="price-cell">$${s.currentPrice.toFixed(2)}</td>
+      <td class="${distCls}">${s.distanceFromHighPct >= 0 ? '+' : ''}${s.distanceFromHighPct.toFixed(2)}%</td>
+      <td class="${bbCls}">${s.bbWidthPct.toFixed(2)}%</td>
+      <td class="${volCls}">${s.volumeRatio.toFixed(2)}×</td>
+      <td style="text-align:center;white-space:nowrap">
+        ${dot(true,'C1 ✓ Prossimità al massimo')}${dot(s.c2,'C2 BB contratta (< soglia per K barre)')}${dot(s.c3,'C3 Volume spike (> moltiplicatore)')}
+      </td>
+      <td style="font-size:12px;color:#e67e22;white-space:nowrap">${missing.join(' + ')}</td>
+    </tr>`;
+  }).join('');
+
+  setText('near-count', sorted.length);
 }
 
 // ═══════════════════════════════════════════════════════════════════
