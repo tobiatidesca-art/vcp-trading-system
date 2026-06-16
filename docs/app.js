@@ -54,6 +54,8 @@ let _lastTrades       = [];     // all trades chronological — for filter recom
 let _lastResult       = null;   // full metrics result — restored when filter is cleared
 let _lastCfg          = null;   // backtest cfg — needed to recompute metrics on filter
 let _divFilterActive  = false;  // true when "with dividends only" filter is on
+let _filterTicker     = '';     // trade list ticker filter (empty = all)
+let _filterMaxDivDays = null;   // max calendar days entry→first dividend (null = no filter)
 let _equityChart      = null;
 let _modalChart       = null;
 let _sortKey          = 'signalStrength';
@@ -508,14 +510,19 @@ function runTickerBacktest(ticker, raw, cfg) {
 
         // ── Dividends received during holding period ──────────────
         // mirrors Python: entry_ts < date <= exit_ts
-        let divPerShare = 0;
+        let divPerShare = 0, firstDivDate = null;
         if (raw.divs?.d) {
           for (let di = 0; di < raw.divs.d.length; di++) {
             const dd = raw.divs.d[di];
-            if (dd > entryDateStr && dd <= exitDateStr) divPerShare += raw.divs.a[di];
+            if (dd > entryDateStr && dd <= exitDateStr) {
+              if (!firstDivDate) firstDivDate = dd;
+              divPerShare += raw.divs.a[di];
+            }
           }
         }
-        const divYieldPct = entryPx > 0 ? +(divPerShare / entryPx * 100).toFixed(4) : 0;
+        const divYieldPct    = entryPx > 0 ? +(divPerShare / entryPx * 100).toFixed(4) : 0;
+        const daysToFirstDiv = firstDivDate
+          ? Math.round((new Date(firstDivDate) - new Date(entryDateStr)) / 86400000) : null;
 
         trades.push({
           ticker,
@@ -535,6 +542,7 @@ function runTickerBacktest(ticker, raw, cfg) {
           dividendYieldPct: divYieldPct,
           dividendUsd:      +(divPerShare * shares).toFixed(2),
           hasDividend:      divPerShare > 0,
+          daysToFirstDiv,
         });
         inPos = false;
       }
@@ -745,9 +753,13 @@ function renderTradesTable(trades) {
     _renderTradeRows([]);
     return;
   }
-  _tradeReg = [...trades].reverse();   // registry indexed by onclick arg
-  _divFilterActive = false;            // reset filter on new backtest
+  _tradeReg = [...trades].reverse();
+  _divFilterActive = false;
   _updateDivFilterBtn();
+  const ti = document.getElementById('filter-ticker');
+  const di = document.getElementById('filter-div-days');
+  if (ti) ti.value = '';
+  if (di) di.value = '';
   _renderTradeRows(_tradeReg);
 }
 
@@ -756,15 +768,21 @@ function _renderTradeRows(display) {
   const tbody = document.getElementById('trades-body');
   if (!tbody) return;
   if (!display.length) {
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#6a8aaa">No trades match the filter</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#6a8aaa">No trades match the filter</td></tr>';
     return;
   }
   tbody.innerHTML = display.map(t => {
     const idx  = _tradeReg.indexOf(t);   // index in full registry — for chart modal
     const cls  = t.winner ? 'positive' : 'negative';
     const sign = t.winner ? '+' : '';
-    const divCell = t.hasDividend
-      ? `<span class="positive" title="$${t.dividendPerShare.toFixed(4)} per share">+${t.dividendYieldPct.toFixed(2)}%</span>`
+    const divTitle = t.hasDividend
+      ? `${t.dividendPerShare.toFixed(4)}/share · 1st div in ${t.daysToFirstDiv}d from entry`
+      : '';
+    const divPct = t.hasDividend
+      ? `<span class="positive" title="${divTitle}">+${t.dividendYieldPct.toFixed(2)}%</span>`
+      : `<span style="color:#3a5070">—</span>`;
+    const divUsd = t.hasDividend
+      ? `<span class="positive" title="${divTitle}">+$${t.dividendUsd.toFixed(2)}</span>`
       : `<span style="color:#3a5070">—</span>`;
     return `<tr>
       <td class="ticker-cell"><span style="cursor:pointer;color:#4db8ff" onclick="openChartModal('${t.ticker}',${idx})">${t.ticker}</span></td>
@@ -775,33 +793,69 @@ function _renderTradeRows(display) {
       <td style="font-size:15px">${t.shares}</td>
       <td class="${cls}">${sign}${fmt$(t.pnlUsd)}</td>
       <td class="${cls}">${sign}${t.returnPct.toFixed(2)}%</td>
-      <td style="font-size:15px">${divCell}</td>
+      <td style="font-size:15px">${divPct}</td>
+      <td style="font-size:15px">${divUsd}</td>
       <td style="font-size:15px;color:#6a8aaa">${t.holdingDays}d</td>
       <td style="font-size:13px;color:#6a8aaa">${fmtReason(t.exitReason)}</td>
     </tr>`;
   }).join('');
 }
 
-// Toggle "with dividends only" filter — also updates top metrics + equity chart
+// Toggle "with dividends only" button — delegates to unified filter engine
 function toggleDivFilter() {
   _divFilterActive = !_divFilterActive;
   _updateDivFilterBtn();
-  if (_divFilterActive) {
-    const divTrades = _lastTrades.filter(t => t.hasDividend);
-    const filtered  = computeMetrics(
-      divTrades,
-      _lastResult.initialCapital,
-      _lastCfg.positionSizeUsd,
-      _lastCfg.maxOpenPositions
-    );
-    _renderMetricsGrid(filtered, `Dividend trades only (${divTrades.length} of ${_lastTrades.length})`);
-    renderEquityChart(filtered.equityCurve, filtered.equityLabels);
-    _renderTradeRows(_tradeReg.filter(t => t.hasDividend));
+  applyTradeFilters();
+}
+
+// Apply all active trade filters (div-only toggle + ticker + max-days-to-dividend)
+function applyTradeFilters() {
+  if (!_tradeReg.length || !_lastResult) return;
+
+  const tickerVal  = (document.getElementById('filter-ticker')?.value  || '').toUpperCase().trim();
+  const daysRaw    = parseInt(document.getElementById('filter-div-days')?.value || '');
+  const hasMaxDays = !isNaN(daysRaw) && daysRaw > 0;
+
+  let subset = _tradeReg;
+  if (_divFilterActive) subset = subset.filter(t => t.hasDividend);
+  if (tickerVal)        subset = subset.filter(t => t.ticker.startsWith(tickerVal));
+  if (hasMaxDays)       subset = subset.filter(t => t.daysToFirstDiv !== null && t.daysToFirstDiv <= daysRaw);
+
+  const isFiltered = _divFilterActive || !!tickerVal || hasMaxDays;
+  if (isFiltered) {
+    const subSet = new Set(subset);
+    const chron  = _lastTrades.filter(t => subSet.has(t));
+    const r      = computeMetrics(chron, _lastResult.initialCapital, _lastCfg.positionSizeUsd, _lastCfg.maxOpenPositions);
+    _renderMetricsGrid(r, _buildFilterLabel(tickerVal, hasMaxDays ? daysRaw : null));
+    renderEquityChart(r.equityCurve, r.equityLabels);
   } else {
     _renderMetricsGrid(_lastResult);
     renderEquityChart(_lastResult.equityCurve, _lastResult.equityLabels);
-    _renderTradeRows(_tradeReg);
   }
+  _renderTradeRows(subset);
+}
+
+// Reset all trade filters
+function clearTradeFilters() {
+  _divFilterActive = false;
+  _updateDivFilterBtn();
+  const ti = document.getElementById('filter-ticker');
+  const di = document.getElementById('filter-div-days');
+  if (ti) ti.value = '';
+  if (di) di.value = '';
+  if (_lastResult) {
+    _renderMetricsGrid(_lastResult);
+    renderEquityChart(_lastResult.equityCurve, _lastResult.equityLabels);
+  }
+  _renderTradeRows(_tradeReg);
+}
+
+function _buildFilterLabel(ticker, maxDivDays) {
+  const parts = [];
+  if (_divFilterActive)    parts.push('dividends only');
+  if (ticker)              parts.push(`ticker: ${ticker}`);
+  if (maxDivDays !== null) parts.push(`div within ${maxDivDays}d`);
+  return parts.join(' · ');
 }
 
 function _updateDivFilterBtn() {
