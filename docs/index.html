@@ -268,6 +268,22 @@
           </div>
         </div>
 
+        <div class="form-section-title">⚙️ Execution Model</div>
+        <div class="form-group">
+          <label>Entry Slippage (%)</label>
+          <input type="number" id="bt-slippage" value="0.10" step="0.05" min="0" max="2.0">
+        </div>
+
+        <div class="assumptions-box">
+          <div class="assumptions-title">⚠️ Perché questo backtest è conservativo rispetto alla realtà</div>
+          <ul>
+            <li><strong>Entrata all'apertura del giorno successivo + slippage</strong>: il segnale VCP si forma alla chiusura. Si simula l'acquisto all'open della seduta successiva, maggiorato dello slippage configurato (spread bid-ask + pressione di mercato). Nella realtà potresti comprare ancora prima della chiusura del giorno del segnale a un prezzo migliore.</li>
+            <li><strong>Gap-down overnight sul stop loss</strong>: se il prezzo apre sotto lo stop, l'uscita avviene al prezzo di apertura (non allo stop). Simula il rischio di gap notturno — nella realtà il gap può essere anche più ampio.</li>
+            <li><strong>Posizioni limitate e senza reinvestimento intraday</strong>: il capitale liberato da una chiusura non viene reinvestito nello stesso giorno. Il numero di posizioni aperte è limitato dal parametro "Max Open Positions".</li>
+            <li><strong>Commissioni non incluse</strong>: con broker a zero commissioni (es. IBKR Lite, Schwab) l'impatto è minimo; con broker a pagamento i risultati reali sarebbero peggiori.</li>
+          </ul>
+        </div>
+
         <button class="btn btn-run" onclick="runBacktest()">▶ RUN BACKTEST</button>
         <button class="btn" onclick="applyBacktestToScreener()"
                 style="width:100%;margin-top:6px;font-size:14px;color:#4db8ff;border-color:#4db8ff;justify-content:center">
@@ -302,6 +318,7 @@
 
         <div id="results-content" style="display:none;">
           <div class="metrics-grid" id="metrics-grid"></div>
+          <div class="div-summary-section" id="div-summary" style="display:none"></div>
           <div class="chart-container">
             <canvas id="equity-chart"></canvas>
           </div>
