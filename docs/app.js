@@ -524,6 +524,7 @@ async function runBacktest() {
     trailingStopAtrMultiplier:parseFloat(document.getElementById('bt-trail')?.value    || 2.0),
     useTrailingStop:          document.getElementById('bt-trailing')?.checked ?? true,
     maxHoldingDays:           parseInt(document.getElementById('bt-maxhold')?.value    || 60),
+    entrySlippagePct:         parseFloat(document.getElementById('bt-slippage')?.value ?? 0.10),
     minBars:                  Math.max(200, parseInt(document.getElementById('bt-high-period')?.value || 252) + 30),
   };
 
@@ -627,7 +628,8 @@ function runTickerBacktest(ticker, raw, cfg) {
 
     if (!inPos) {
       if (isSignalAt(closes, highs, volumes, bbwArr, volMA, i, scanCfg) && i + 1 <= endIdx) {
-        entryPx = opens[i + 1];
+        const slipMult = 1 + (cfg.entrySlippagePct || 0) / 100;
+        entryPx = opens[i + 1] * slipMult;
         shares  = entryPx > 0 ? Math.floor(cfg.positionSizeUsd / entryPx) : 0;
         if (shares === 0) { i++; continue; }
         entryAtr      = atrArr[i] ?? (curHigh - curLow);
@@ -735,7 +737,7 @@ function computeMetrics(trades, initialCapital, positionSizeUsd, maxOpenPos) {
   const avgLoss      = losses.length ? grossLoss   / losses.length : 0;
   const expectancy   = (winRate / 100) * avgWin - (1 - winRate / 100) * avgLoss;
 
-  // Dollar equity curve
+  // Capital-gains-only equity curve
   const equity = [initialCapital], labels = ['Start'];
   let current = initialCapital;
   for (const t of trades) {
@@ -747,6 +749,19 @@ function computeMetrics(trades, initialCapital, positionSizeUsd, maxOpenPos) {
 
   let peak = initialCapital, maxDD = 0;
   for (const eq of equity) { peak = Math.max(peak, eq); maxDD = Math.max(maxDD, (peak - eq) / peak * 100); }
+
+  // Total-return equity curve (capital gains + dividends received)
+  const equityTR = [initialCapital], labelsTR = ['Start'];
+  let currentTR = initialCapital;
+  for (const t of trades) {
+    currentTR += t.pnlUsd + (t.dividendUsd || 0);
+    equityTR.push(+currentTR.toFixed(2));
+    labelsTR.push(`${t.exitDate} ${t.ticker}`);
+  }
+  const totalReturnTRPct = (currentTR - initialCapital) / initialCapital * 100;
+  let peakTR = initialCapital, maxDDTR = 0;
+  for (const eq of equityTR) { peakTR = Math.max(peakTR, eq); maxDDTR = Math.max(maxDDTR, (peakTR - eq) / peakTR * 100); }
+  const totalDividendUsd = trades.reduce((s, t) => s + (t.dividendUsd || 0), 0);
 
   const totalPnl = trades.reduce((s, t) => s + t.pnlUsd, 0);
 
@@ -816,6 +831,12 @@ function computeMetrics(trades, initialCapital, positionSizeUsd, maxOpenPos) {
     expectancyPct: +expectancy.toFixed(2),
     initialCapital, finalCapital: +current.toFixed(2),
     equityCurve: equity, equityLabels: labels,
+    // Total return (capital gains + dividends received)
+    equityCurveTR: equityTR, equityLabelsTR: labelsTR,
+    totalReturnTRPct: +totalReturnTRPct.toFixed(2),
+    maxDrawdownTRPct: +maxDDTR.toFixed(2),
+    finalCapitalTR: +currentTR.toFixed(2),
+    totalDividendUsd: +totalDividendUsd.toFixed(2),
     trades, annualStats, monthlyStats,
   };
 }
@@ -837,7 +858,8 @@ function renderResults(result) {
   }
 
   _renderMetricsGrid(result);
-  renderEquityChart(result.equityCurve, result.equityLabels);
+  renderDividendPanel(result);
+  renderEquityChart(result.equityCurve, result.equityLabels, result.equityCurveTR);
   renderTradesTable(result.trades);
   renderAnnualTable(result.annualStats);
   renderMonthlyGrid(result.monthlyStats);
@@ -867,33 +889,70 @@ function _renderMetricsGrid(result, label) {
   `);
 }
 
-function renderEquityChart(curve, labels) {
+function renderEquityChart(curve, labels, curveTR = null) {
   const ctx = document.getElementById('equity-chart');
   if (!ctx) return;
   if (_equityChart) { _equityChart.destroy(); _equityChart = null; }
-  const initial = curve[0];
+  const datasets = [
+    {
+      label: 'Capital Gains', data: curve,
+      borderColor: '#4db8ff', backgroundColor: 'rgba(77,184,255,0.07)',
+      borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3, order: 2,
+    },
+  ];
+  if (curveTR) {
+    datasets.push({
+      label: '+ Dividendi', data: curveTR,
+      borderColor: '#2ecc71', backgroundColor: 'transparent',
+      borderWidth: 1.5, borderDash: [5, 3], pointRadius: 0, fill: false, tension: 0.3, order: 1,
+    });
+  }
   _equityChart = new Chart(ctx, {
     type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: 'Equity ($)', data: curve,
-        borderColor: '#4db8ff', backgroundColor: 'rgba(77,184,255,0.07)',
-        borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3,
-      }]
-    },
+    data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: {
-        label: c => '$' + Math.round(c.raw).toLocaleString('en-US'),
-        title: c => c[0].label,
-      }}},
+      plugins: {
+        legend: {
+          display: !!curveTR,
+          labels: { color: '#a8c0d8', font: { size: 12 }, boxWidth: 20 },
+        },
+        tooltip: { callbacks: {
+          label: c => c.dataset.label + ': $' + Math.round(c.raw).toLocaleString('en-US'),
+          title: c => c[0].label,
+        }},
+      },
       scales: {
         x: { display: false },
         y: { grid: { color: '#1e3050' }, ticks: { color: '#a8c0d8', callback: v => '$' + Math.round(v / 1000) + 'K' } }
       }
     }
   });
+}
+
+function renderDividendPanel(result) {
+  const el = document.getElementById('div-summary');
+  if (!el) return;
+  if (!result.totalDividendUsd) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  const retCls   = result.totalReturnTRPct >= 0 ? 'green' : 'red';
+  const ddCls    = result.maxDrawdownTRPct > 20 ? 'red' : result.maxDrawdownTRPct > 10 ? 'yellow' : 'green';
+  const totalTR  = result.totalPnlUsd + result.totalDividendUsd;
+  const divShare = result.totalTrades > 0 ? (result.totalDividendUsd / result.totalTrades) : 0;
+  el.innerHTML = `
+    <div class="div-summary-title">💰 Rendimento Totale incl. Dividendi</div>
+    <div class="metrics-grid" style="margin-top:8px">
+      <div class="metric-card div-card"><div class="metric-label">Dividendi Incassati</div><div class="metric-value green">+${fmt$(result.totalDividendUsd)}</div></div>
+      <div class="metric-card div-card"><div class="metric-label">Div. Medio / Trade</div><div class="metric-value green">+${fmt$(divShare)}</div></div>
+      <div class="metric-card div-card"><div class="metric-label">P&L incl. Div.</div><div class="metric-value ${totalTR >= 0 ? 'green' : 'red'}">+${fmt$(totalTR)}</div></div>
+      <div class="metric-card div-card"><div class="metric-label">Return incl. Div.</div><div class="metric-value ${retCls}">${fmtPct(result.totalReturnTRPct)}</div></div>
+      <div class="metric-card div-card"><div class="metric-label">Max DD incl. Div.</div><div class="metric-value ${ddCls}">${result.maxDrawdownTRPct.toFixed(1)}%</div></div>
+      <div class="metric-card div-card"><div class="metric-label">Capitale Finale incl. Div.</div><div class="metric-value ${retCls}">${fmt$(result.finalCapitalTR)}</div></div>
+    </div>
+    <div style="font-size:11px;color:#4a7a5a;margin-top:8px">
+      La curva di equity verde tratteggiata nel grafico sopra include i dividendi ricevuti durante il periodo di detenzione.
+    </div>
+  `;
 }
 
 // renderTradesTable: stores full reversed list in _tradeReg, then applies filter
@@ -977,10 +1036,12 @@ function applyTradeFilters() {
     const chron  = _lastTrades.filter(t => subSet.has(t));
     const r      = computeMetrics(chron, _lastResult.initialCapital, _lastCfg.positionSizeUsd, _lastCfg.maxOpenPositions);
     _renderMetricsGrid(r, _buildFilterLabel(tickerVal, hasMaxDays ? daysRaw : null));
-    renderEquityChart(r.equityCurve, r.equityLabels);
+    renderDividendPanel(r);
+    renderEquityChart(r.equityCurve, r.equityLabels, r.equityCurveTR);
   } else {
     _renderMetricsGrid(_lastResult);
-    renderEquityChart(_lastResult.equityCurve, _lastResult.equityLabels);
+    renderDividendPanel(_lastResult);
+    renderEquityChart(_lastResult.equityCurve, _lastResult.equityLabels, _lastResult.equityCurveTR);
   }
   _renderTradeRows(subset);
 }
@@ -995,7 +1056,8 @@ function clearTradeFilters() {
   if (di) di.value = '';
   if (_lastResult) {
     _renderMetricsGrid(_lastResult);
-    renderEquityChart(_lastResult.equityCurve, _lastResult.equityLabels);
+    renderDividendPanel(_lastResult);
+    renderEquityChart(_lastResult.equityCurve, _lastResult.equityLabels, _lastResult.equityCurveTR);
   }
   _renderTradeRows(_tradeReg);
 }
