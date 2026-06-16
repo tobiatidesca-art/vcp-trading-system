@@ -97,6 +97,7 @@ let _filterTicker     = '';     // trade list ticker filter (empty = all)
 let _filterMaxDivDays = null;   // max calendar days entry→first dividend (null = no filter)
 let _equityChart      = null;
 let _modalChart       = null;
+let _subChart         = null;
 let _sortKey          = 'signalStrength';
 let _sortAsc          = true;
 
@@ -1017,16 +1018,24 @@ async function openChartModal(ticker, tradeIdx) {
   const trade  = (tradeIdx !== null && tradeIdx !== undefined) ? _tradeReg[tradeIdx] : null;
   const infoEl = document.getElementById('modal-trade-info');
   if (infoEl) {
-    infoEl.innerHTML = trade ? `
-      <span><span class="info-lbl">Entry</span> <span class="info-val">${trade.entryDate}</span></span>
-      <span><span class="info-lbl">Exit</span>  <span class="info-val">${trade.exitDate}</span></span>
-      <span><span class="info-lbl">Entry $</span><span class="info-val">$${trade.entryPrice.toFixed(2)}</span></span>
-      <span><span class="info-lbl">Exit $</span> <span class="info-val">$${trade.exitPrice.toFixed(2)}</span></span>
-      <span><span class="info-lbl">P&amp;L</span>
-        <span class="info-val ${trade.winner ? 'positive' : 'negative'}">${trade.pnlUsd >= 0 ? '+' : ''}${fmt$(trade.pnlUsd)}
-        (${trade.returnPct >= 0 ? '+' : ''}${trade.returnPct.toFixed(2)}%)</span></span>
-      <span><span class="info-lbl">Reason</span><span class="info-val">${fmtReason(trade.exitReason)}</span></span>
-    ` : '';
+    if (trade) {
+      const pnlCls = trade.winner ? 'positive' : 'negative';
+      const pnlStr = `${trade.pnlUsd >= 0 ? '+' : ''}${fmt$(trade.pnlUsd)} (${trade.returnPct >= 0 ? '+' : ''}${trade.returnPct.toFixed(2)}%)`;
+      const divStr = trade.hasDividend
+        ? ` &nbsp;|&nbsp; 📅 Dividendo: <span class="positive">+$${trade.dividendUsd.toFixed(2)} (+${trade.dividendYieldPct.toFixed(2)}%)</span>`
+        : '';
+      infoEl.innerHTML = `
+        <span style="color:#2ecc71;font-size:15px">●</span>
+        <strong>Entrata</strong> il <strong>${trade.entryDate}</strong> a <strong>$${trade.entryPrice.toFixed(2)}</strong>
+        &nbsp;→&nbsp;
+        <span style="color:#f1c40f;font-size:15px">●</span>
+        <strong>Uscita</strong> il <strong>${trade.exitDate}</strong> a <strong>$${trade.exitPrice.toFixed(2)}</strong>
+        &nbsp;|&nbsp; ${trade.holdingDays} giorni
+        &nbsp;|&nbsp; P&L: <span class="${pnlCls}"><strong>${pnlStr}</strong></span>
+        &nbsp;|&nbsp; Motivo: <strong>${fmtReason(trade.exitReason)}</strong>${divStr}`;
+    } else {
+      infoEl.innerHTML = '';
+    }
   }
 
   modal.style.display = 'flex';
@@ -1062,13 +1071,16 @@ async function openChartModal(ticker, tradeIdx) {
   const closes = raw.c.slice(sliceStart, sliceEnd);
   const labels = raw.d?.slice(sliceStart, sliceEnd) ?? closes.map((_, k) => String(k));
 
-  // ── Reset canvas ──────────────────────────────────────────────
-  if (wrap && !wrap.querySelector('canvas')) {
-    wrap.innerHTML = '<canvas id="modal-chart-canvas"></canvas>';
+  // ── Reset canvases ────────────────────────────────────────────
+  if (wrap) {
+    wrap.innerHTML = `
+      <canvas id="modal-chart-canvas" style="display:block;height:280px"></canvas>
+      <canvas id="modal-sub-canvas"   style="display:block;height:110px;margin-top:6px"></canvas>`;
   }
   const canvas = document.getElementById('modal-chart-canvas');
   if (!canvas) return;
   if (_modalChart) { _modalChart.destroy(); _modalChart = null; }
+  if (_subChart)   { _subChart.destroy();   _subChart   = null; }
 
   // ── Main price line ───────────────────────────────────────────
   const datasets = [{
@@ -1143,7 +1155,51 @@ async function openChartModal(ticker, tradeIdx) {
     });
   }
 
-  // ── Build chart ───────────────────────────────────────────────
+  // ── Sub-chart: BB Width + Volume ─────────────────────────────
+  const subCanvas = document.getElementById('modal-sub-canvas');
+  if (subCanvas && raw.v) {
+    const bbwFull    = calcBBWidth(raw.c, 20, 2.0);
+    const volMAFull  = calcVolMA(raw.v, 20);
+    const bbwSlice   = bbwFull.slice(sliceStart, sliceEnd);
+    const volSlice   = raw.v.slice(sliceStart, sliceEnd);
+    const volMASlice = volMAFull.slice(sliceStart, sliceEnd);
+
+    let entrySubIdx = -1;
+    if (trade && raw.d) entrySubIdx = raw.d.indexOf(trade.entryDate) - sliceStart;
+
+    const volColors = volSlice.map((_, k) =>
+      k === entrySubIdx ? 'rgba(46,204,113,0.9)' : 'rgba(77,184,255,0.3)'
+    );
+    const bbThresh = _lastCfg?.bbWidthThresholdPct ?? 8.0;
+
+    _subChart = new Chart(subCanvas, {
+      data: { labels, datasets: [
+        { type:'bar',  label:'Volume',     data:volSlice,   backgroundColor:volColors,           yAxisID:'yVol', order:3 },
+        { type:'line', label:'Vol MA 20',  data:volMASlice, borderColor:'rgba(241,196,15,0.75)', yAxisID:'yVol', order:2, borderWidth:1.5, pointRadius:0, fill:false },
+        { type:'line', label:'BB Width %', data:bbwSlice,   borderColor:'#a855f7',               yAxisID:'yBBW', order:1, borderWidth:1.5, pointRadius:0, fill:false },
+        { type:'line', label:'Threshold',  data:bbwSlice.map(() => bbThresh), borderColor:'rgba(168,85,247,0.4)', yAxisID:'yBBW', order:0, borderWidth:1, borderDash:[4,3], pointRadius:0, fill:false },
+      ]},
+      options: {
+        responsive:true, maintainAspectRatio:false, animation:false,
+        plugins: {
+          legend: { display:true, labels:{ color:'#6a8aaa', font:{size:10}, filter: i => i.text !== 'Threshold' } },
+          tooltip: { callbacks: { label(ctx) {
+            if (ctx.dataset.label === 'Volume')     return `Vol: ${(ctx.raw/1e6).toFixed(2)}M`;
+            if (ctx.dataset.label === 'Vol MA 20')  return ctx.raw ? `Vol MA: ${(ctx.raw/1e6).toFixed(2)}M` : null;
+            if (ctx.dataset.label === 'BB Width %') return ctx.raw ? `BB Width: ${ctx.raw.toFixed(2)}%` : null;
+            return null;
+          }}},
+        },
+        scales: {
+          x:    { ticks:{ color:'#6a8aaa', maxTicksLimit:8, font:{size:9} }, grid:{ color:'#1e3050' } },
+          yVol: { type:'linear', position:'left',  grid:{ color:'#1e3050' }, ticks:{ color:'#4db8ff', font:{size:9}, callback: v => (v/1e6).toFixed(1)+'M' } },
+          yBBW: { type:'linear', position:'right', grid:{ display:false },   ticks:{ color:'#a855f7', font:{size:9}, callback: v => v.toFixed(0)+'%' }, min:0 },
+        },
+      },
+    });
+  }
+
+  // ── Build main chart ──────────────────────────────────────────
   const hasAnnotations = !!trade || _chartDivs.length > 0;
   _modalChart = new Chart(canvas, {
     type: 'line',
@@ -1181,6 +1237,7 @@ function closeChartModal() {
   const modal = document.getElementById('chart-modal');
   if (modal) modal.style.display = 'none';
   if (_modalChart) { _modalChart.destroy(); _modalChart = null; }
+  if (_subChart)   { _subChart.destroy();   _subChart   = null; }
 }
 
 function modalBackdropClick(e) { if (e.target === e.currentTarget) closeChartModal(); }
