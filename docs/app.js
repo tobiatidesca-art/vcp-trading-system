@@ -541,18 +541,29 @@ function sortTable(key) {
 // Renders signal age badge + price-since-first-signal for the screener Date column
 function renderSignalAge(s) {
   const date = `<div style="font-size:11px;color:#6a8aaa;margin-bottom:3px">${s.detectedAt}</div>`;
-  if (s.signalAgeDays === 0) {
-    return date + `<span class="sig-age-badge new" title="Segnale rilevato oggi — entrata ottimale: apertura di domani">NUOVO ✦</span>`;
-  }
-  const d   = s.signalAgeDays;
-  const pct = s.priceSinceSignalPct;
-  const ageCls  = d <= 2 ? 'recent' : d <= 5 ? 'stale' : 'old';
+
+  // Days elapsed since the last data bar (data staleness)
+  const dataDate = new Date(s.detectedAt + 'T00:00:00');
+  const today    = new Date(); today.setHours(0, 0, 0, 0);
+  const staleDays = Math.max(0, Math.round((today - dataDate) / 86400000));
+
+  // Total age = consecutive days in data + days since data was generated
+  const totalAge = s.signalAgeDays + staleDays;
+
+  const pct     = s.priceSinceSignalPct;
   const pctSign = pct >= 0 ? '+' : '';
   const pctCls  = pct > 3 ? 'color:#e74c3c' : pct > 1 ? 'color:#e67e22' : 'color:#2ecc71';
-  const tip = `Primo segnale: ${s.firstSignalDate}. Dal 1° giorno il prezzo è variato del ${pctSign}${pct}%. Entrata ottimale: ${d} gg fa.`;
+  const firstDate = s.signalAgeDays > 0 ? s.firstSignalDate : s.detectedAt;
+  const staleNote = staleDays > 0 ? ` (dati aggiornati al ${s.detectedAt}, ${staleDays} gg fa)` : '';
+  const tip = `Primo segnale: ${firstDate}${staleNote}. Entrata ottimale: ${totalAge} gg fa.`;
+
+  if (totalAge === 0) {
+    return date + `<span class="sig-age-badge new" title="Segnale rilevato oggi — entrata ottimale: apertura di domani">NUOVO ✦</span>`;
+  }
+  const ageCls = totalAge <= 2 ? 'recent' : totalAge <= 5 ? 'stale' : 'old';
   return date +
-    `<span class="sig-age-badge ${ageCls}" title="${tip}">${d} gg fa</span>` +
-    `<div style="font-size:11px;${pctCls};margin-top:2px" title="${tip}">${pctSign}${pct}% dal 1° seg.</div>`;
+    `<span class="sig-age-badge ${ageCls}" title="${tip}">${totalAge} gg fa</span>` +
+    (pct !== 0 ? `<div style="font-size:11px;${pctCls};margin-top:2px" title="${tip}">${pctSign}${pct}% dal 1° seg.</div>` : '');
 }
 
 // Quality dot: score 2=strong(green), 1=medium(yellow), 0=weak(orange/at-limit)
