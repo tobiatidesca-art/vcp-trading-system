@@ -498,6 +498,12 @@ function sortTable(key) {
   renderScreenerTable(_signals);
 }
 
+// Quality dot: score 2=strong(green), 1=medium(yellow), 0=weak(orange/at-limit)
+function condQualDot(score, tooltip) {
+  const cls = score === 2 ? 'cok-strong' : score === 1 ? 'cok-mid' : 'cok-weak';
+  return `<span class="cond-dot ${cls}" title="${tooltip}"></span>`;
+}
+
 function renderScreenerTable(sigs) {
   const tbody = document.getElementById('screener-body');
   if (!tbody) return;
@@ -536,7 +542,20 @@ function renderScreenerTable(sigs) {
       <td class="neutral">${s.atr14.toFixed(2)}</td>
       <td><div class="volume-bar-wrap"><span class="${volCls}">${s.volumeRatio.toFixed(2)}×</span>
           <div class="volume-bar" style="width:${barW}px"></div></div></td>
-      <td><span class="badge badge-${s.signalStrength}">${s.signalStrength}</span></td>
+      <td style="text-align:center">
+        <span class="badge badge-${s.signalStrength}">${s.signalStrength}</span>
+        <div style="margin-top:5px;display:flex;justify-content:center;gap:3px">
+          ${condQualDot(s.distanceFromHighPct >= 0 ? 2 : s.distanceFromHighPct > -1 ? 1 : 0,
+            'C1 Prossimità al massimo: ' + (s.distanceFromHighPct >= 0 ? '+' : '') + s.distanceFromHighPct.toFixed(2) + '%' +
+            ' — verde = al massimo, giallo = entro -1%, arancio = al limite soglia')}
+          ${condQualDot(s.bbWidthPct < 4.0 ? 2 : s.bbWidthPct < 5.5 ? 1 : 0,
+            'C2 BB Width: ' + s.bbWidthPct.toFixed(2) + '%' +
+            ' — verde = < 4% (molto contratta), giallo = < 5.5%, arancio = al limite soglia')}
+          ${condQualDot(s.volumeRatio > 2.5 ? 2 : s.volumeRatio > 1.8 ? 1 : 0,
+            'C3 Volume: ' + s.volumeRatio.toFixed(2) + '× la media' +
+            ' — verde = > 2.5× (forte spike), giallo = > 1.8×, arancio = al limite soglia')}
+        </div>
+      </td>
       <td style="font-size:14px;color:#6a8aaa">${s.detectedAt}</td>
       <td style="font-size:13px;text-align:center">${s.daysToNextDiv != null ? `<span style="color:#f1c40f">${s.daysToNextDiv}gg</span><br><span style="color:#a8c0d8;font-size:11px">$${(+s.nextDivAmt).toFixed(2)}</span>` : '<span style="color:#3d5a7a">—</span>'}</td>
     </tr>`;
