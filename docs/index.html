@@ -254,7 +254,13 @@
             <canvas id="equity-chart"></canvas>
           </div>
           <div class="trades-section">
-            <h4>Trade List</h4>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <h4>Trade List</h4>
+              <button id="btn-div-filter" class="btn" onclick="toggleDivFilter()"
+                      style="font-size:13px;padding:6px 14px;gap:6px">
+                📅 With Dividends Only
+              </button>
+            </div>
             <div class="table-wrapper" style="max-height:360px;overflow-y:auto;">
               <table id="trades-table">
                 <thead>
@@ -267,6 +273,7 @@
                     <th>Shares</th>
                     <th>P&amp;L $</th>
                     <th>Return %</th>
+                    <th title="Total dividends received during holding / entry price">Div. %</th>
                     <th>Days</th>
                     <th>Exit Reason</th>
                   </tr>
