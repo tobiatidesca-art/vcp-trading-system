@@ -229,13 +229,48 @@ function showNoData() {
     </div></td></tr>`);
 }
 
+// ── Legge i parametri VCP dagli input dello screener ─────────────
+function readScreenerCfg() {
+  return {
+    ...DEFAULT_CFG,
+    proximityThreshold: parseFloat(document.getElementById('sc-proximity')?.value) || 5.0,
+    bbWidthThreshold:   parseFloat(document.getElementById('sc-bb-width')?.value)  || 8.0,
+    bbContractionBars:  parseInt(document.getElementById('sc-bb-bars')?.value)     || 3,
+    volumeMultiplier:   parseFloat(document.getElementById('sc-vol-mult')?.value)  || 1.3,
+  };
+}
+
+// Copia i parametri VCP dal backtest allo screener e switcha tab
+function applyBacktestToScreener() {
+  const map = { 'sc-bb-width':'bt-bb-width', 'sc-bb-bars':'bt-bb-bars', 'sc-vol-mult':'bt-vol-mult' };
+  for (const [scId, btId] of Object.entries(map)) {
+    const val = document.getElementById(btId)?.value;
+    const el  = document.getElementById(scId);
+    if (val && el) el.value = val;
+  }
+  document.querySelector('[data-tab="screener"]')?.click();
+  runScreener();
+  showToast('Parametri VCP applicati allo screener live', 'success');
+}
+
+// Reset parametri screener ai valori di default
+function resetScreenerParams() {
+  const defs = { 'sc-proximity': 5.0, 'sc-bb-width': 8.0, 'sc-bb-bars': 3, 'sc-vol-mult': 1.3 };
+  for (const [id, val] of Object.entries(defs)) {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  }
+  runScreener();
+}
+
 // ── Run screener over loaded JSON data ────────────────────────────
 function runScreener() {
   if (!_screenerDB) return;
+  const cfg = readScreenerCfg();
   _signals = [];
   for (const [ticker, raw] of Object.entries(_screenerDB.tickers || {})) {
-    if (!raw?.c || raw.c.length < DEFAULT_CFG.minBars) continue;
-    const sig = detectSignalFromRaw(ticker, raw);
+    if (!raw?.c || raw.c.length < cfg.minBars) continue;
+    const sig = detectSignalFromRaw(ticker, raw, cfg);
     if (sig) _signals.push(sig);
   }
   renderScreenerTable(_signals);
