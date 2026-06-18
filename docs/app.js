@@ -608,6 +608,7 @@ function renderScreenerTable(sigs) {
       <td class="${distCls}">${s.distanceFromHighPct >= 0 ? '+' : ''}${s.distanceFromHighPct.toFixed(2)}%</td>
       <td class="neutral">${s.bbWidthPct.toFixed(2)}%</td>
       <td class="neutral">${s.atr14.toFixed(2)}</td>
+      <td class="negative">${(s.highPeriodPrice - s.atr14 * 2).toFixed(2)}</td>
       <td><div class="volume-bar-wrap"><span class="${volCls}">${s.volumeRatio.toFixed(2)}×</span>
           <div class="volume-bar" style="width:${barW}px"></div></div></td>
       <td style="text-align:center">
