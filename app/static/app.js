@@ -235,6 +235,7 @@ function renderTable() {
       <td class="${dCls}">${dSign}${f2(s.distanceFromHighPct)}%</td>
       <td class="${s.bbWidthPct < 4 ? 'positive' : 'neutral'}">${f2(s.bbWidthPct)}%</td>
       <td>$${f2(s.atr14)}</td>
+      <td class="negative">$${f2(s.highPeriodPrice - s.atr14 * 2)}</td>
       <td>
         <div class="volume-bar-wrap">
           <span class="${s.volumeRatio > 2 ? 'positive' : 'neutral'}">${f1(s.volumeRatio)}x</span>
