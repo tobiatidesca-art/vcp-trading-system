@@ -137,6 +137,11 @@ input:focus,select:focus { border-color:var(--blue);box-shadow:0 0 0 3px rgba(77
 select option { background:var(--bg-card);color:var(--white); }
 .form-row { display:grid;grid-template-columns:1fr 1fr;gap:12px; }
 .form-section-title { font-size:13px;font-weight:800;color:var(--gray3);text-transform:uppercase;letter-spacing:0.7px;margin:18px 0 10px;padding-bottom:7px;border-bottom:1px solid var(--border-dim); }
+.radio-group { display:flex;flex-direction:column;gap:6px; }
+.radio-label { display:flex;align-items:center;gap:8px;padding:8px 12px;border:2px solid var(--border);border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;color:var(--gray2);text-transform:none;letter-spacing:0;transition:border-color .2s,color .2s; }
+.radio-label input[type=radio] { width:auto;margin:0;padding:0;height:auto; }
+.radio-label.active { border-color:var(--blue);color:var(--white); }
+.compare-header { font-size:12px;font-weight:800;color:#f1c40f;text-transform:uppercase;letter-spacing:0.6px;padding:4px 0 2px;grid-column:1/-1; }
 
 .metrics-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px; }
 .metric-card  { background:var(--bg-header);border:2px solid var(--border);border-radius:8px;padding:14px 16px; }

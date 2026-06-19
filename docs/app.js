@@ -87,6 +87,7 @@ const DEFAULT_CFG = {
 let _activeMarkets    = ['US']; // market codes currently selected
 let _screenerDB       = null;   // merged screener data for active markets
 let _tickerCache      = {};     // full-history JSON keyed by ticker symbol
+let _ticker1hCache    = {};     // 1h intraday JSON keyed by ticker symbol
 let _signals          = [];     // last screener result (all 3 conditions met)
 let _nearSignals      = [];     // C1 met but not all conditions (near signal)
 let _tradeReg         = [];     // all trades reversed — used by chart modal (index = onclick arg)
@@ -697,6 +698,76 @@ function renderNearSignalTable(sigs) {
 //  BACKTESTING ENGINE  (mirrors Python backtest.py)
 // ═══════════════════════════════════════════════════════════════════
 
+function setSource(val, el) {
+  document.querySelectorAll('.radio-label').forEach(l => l.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelector(`input[name="bt-source"][value="${val}"]`).checked = true;
+}
+
+function _getSource() {
+  const el = document.querySelector('input[name="bt-source"]:checked');
+  return el ? el.value : 'daily';
+}
+
+function aggregate1hToDaily(raw1h) {
+  const daily = {};
+  for (let i = 0; i < raw1h.dt.length; i++) {
+    const date = raw1h.dt[i].slice(0, 10);
+    if (!daily[date]) {
+      daily[date] = { o: raw1h.o[i], h: raw1h.h[i], l: raw1h.l[i], c: raw1h.c[i], v: raw1h.v[i] };
+    } else {
+      daily[date].h = Math.max(daily[date].h, raw1h.h[i]);
+      daily[date].l = Math.min(daily[date].l, raw1h.l[i]);
+      daily[date].c = raw1h.c[i];
+      daily[date].v += raw1h.v[i];
+    }
+  }
+  const dates = Object.keys(daily).sort();
+  return {
+    d: dates,
+    o: dates.map(d => daily[d].o),
+    h: dates.map(d => daily[d].h),
+    l: dates.map(d => daily[d].l),
+    c: dates.map(d => daily[d].c),
+    v: dates.map(d => daily[d].v),
+  };
+}
+
+async function _loadTickerData(tickers, source, onProgress) {
+  const dataMap = {};
+  let loaded = 0;
+  await Promise.all(tickers.map(async ticker => {
+    try {
+      if (source === '1h') {
+        if (_ticker1hCache[ticker]) {
+          dataMap[ticker] = aggregate1hToDaily(_ticker1hCache[ticker]);
+        } else {
+          const resp = await fetch(`data/${ticker}_1h.json`);
+          if (resp.ok) {
+            const raw = await resp.json();
+            _ticker1hCache[ticker] = raw;
+            dataMap[ticker] = aggregate1hToDaily(raw);
+          }
+        }
+      } else {
+        if (_tickerCache[ticker]) {
+          dataMap[ticker] = _tickerCache[ticker];
+        } else {
+          const resp = await fetch(`data/${ticker}.json`);
+          if (resp.ok) {
+            const data = await resp.json();
+            _tickerCache[ticker] = data;
+            dataMap[ticker] = data;
+          }
+        }
+      }
+    } catch { /* skip */ }
+    loaded++;
+    if (onProgress) onProgress(loaded, tickers.length, ticker);
+  }));
+  return dataMap;
+}
+
 async function runBacktest() {
   const tickersRaw = (document.getElementById('bt-tickers')?.value || '').trim();
   const startDate  = document.getElementById('bt-start')?.value;
@@ -739,56 +810,65 @@ async function runBacktest() {
   document.getElementById('bt-progress-fill').style.width = '0%';
   setText('bt-progress-ticker',  '↓ loading…');
 
-  // ── Download all ticker data in parallel ──────────────────────
+  const source  = _getSource();
+  const isCompare = source === 'compare';
+  const totalSteps = isCompare ? tickers.length * 2 : tickers.length;
   let loaded = 0;
-  const dataMap = {};
 
-  await Promise.all(tickers.map(async ticker => {
-    try {
-      if (_tickerCache[ticker]) {
-        dataMap[ticker] = _tickerCache[ticker];
-      } else {
-        const resp = await fetch(`data/${ticker}.json`);
-        if (resp.ok) {
-          const data = await resp.json();
-          _tickerCache[ticker] = data;
-          dataMap[ticker] = data;
-        }
-      }
-    } catch { /* skip missing tickers */ }
+  const onProgress = (n, total, ticker) => {
     loaded++;
-    const pct = Math.round(loaded / tickers.length * 100);
-    setText('bt-progress-counter', `${loaded} / ${tickers.length}`);
+    const pct = Math.round(loaded / totalSteps * 100);
+    setText('bt-progress-counter', `${loaded} / ${totalSteps}`);
     document.getElementById('bt-progress-fill').style.width = pct + '%';
     setText('bt-progress-ticker', '↓ ' + ticker);
-  }));
+  };
 
-  setText('bt-progress-label', 'Running backtest…');
-  await new Promise(r => setTimeout(r, 0));   // yield to let browser repaint
+  // ── Download daily data (always needed) ───────────────────────
+  setText('bt-progress-label', 'Downloading daily data…');
+  const dataMapDaily = await _loadTickerData(tickers, 'daily', onProgress);
 
-  // ── Run per-ticker simulation ─────────────────────────────────
-  const allTrades = [];
-  for (const ticker of tickers) {
-    const raw = dataMap[ticker];
-    if (!raw?.c) continue;
-    try { allTrades.push(...runTickerBacktest(ticker, raw, cfg)); }
-    catch (e) { console.warn('Backtest error', ticker, e); }
+  // ── Download 1h data (if needed) ──────────────────────────────
+  let dataMap1h = null;
+  if (isCompare || source === '1h') {
+    setText('bt-progress-label', 'Downloading 1h data…');
+    dataMap1h = await _loadTickerData(tickers, '1h', isCompare ? onProgress : onProgress);
   }
 
-  allTrades.sort((a, b) => a.entryDate.localeCompare(b.entryDate));
+  setText('bt-progress-label', 'Running backtest…');
+  await new Promise(r => setTimeout(r, 0));
 
-  const maxPos = cfg.maxOpenPositions;
-  const finalTrades = maxPos > 0 ? filterMaxPositions(allTrades, maxPos) : allTrades;
-
-  const result = computeMetrics(finalTrades, cfg.initialCapital, cfg.positionSizeUsd, maxPos);
-
-  // Save for filter recomputation
-  _lastTrades = finalTrades;
-  _lastCfg    = cfg;
-  _lastResult = result;
+  // ── Helper: run simulation on a dataMap ───────────────────────
+  function _runOnMap(dataMap) {
+    const trades = [];
+    for (const ticker of tickers) {
+      const raw = dataMap[ticker];
+      if (!raw?.c) continue;
+      try { trades.push(...runTickerBacktest(ticker, raw, cfg)); }
+      catch (e) { console.warn('Backtest error', ticker, e); }
+    }
+    trades.sort((a, b) => a.entryDate.localeCompare(b.entryDate));
+    const maxPos = cfg.maxOpenPositions;
+    const final  = maxPos > 0 ? filterMaxPositions(trades, maxPos) : trades;
+    return { trades: final, result: computeMetrics(final, cfg.initialCapital, cfg.positionSizeUsd, maxPos) };
+  }
 
   hide('bt-progress');
-  renderResults(result);
+
+  if (isCompare) {
+    const daily = _runOnMap(dataMapDaily);
+    const h1    = _runOnMap(dataMap1h);
+    _lastTrades = daily.trades;
+    _lastCfg    = cfg;
+    _lastResult = daily.result;
+    renderCompareResults(daily.result, h1.result);
+  } else {
+    const dataMap = source === '1h' ? dataMap1h : dataMapDaily;
+    const { trades: finalTrades, result } = _runOnMap(dataMap);
+    _lastTrades = finalTrades;
+    _lastCfg    = cfg;
+    _lastResult = result;
+    renderResults(result);
+  }
 }
 
 // ── Per-ticker simulation (mirrors Python _run_ticker) ────────────
@@ -1048,6 +1128,91 @@ function computeMetrics(trades, initialCapital, positionSizeUsd, maxOpenPos) {
 // ═══════════════════════════════════════════════════════════════════
 //  RESULTS RENDERING
 // ═══════════════════════════════════════════════════════════════════
+
+function renderCompareResults(rDaily, r1h) {
+  show('results-content');
+  hide('results-placeholder');
+  hide('annual-section');
+  hide('monthly-section');
+
+  // ── Equity chart: two curves ──────────────────────────────────
+  renderEquityChartCompare(rDaily, r1h);
+
+  // ── Metrics: side-by-side ─────────────────────────────────────
+  function metricRow(label, vDaily, v1h, cls = '') {
+    return `
+      <div class="metric-card" style="grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:center;padding:10px 14px;">
+        <div style="font-size:12px;font-weight:700;color:#a8c0d8;text-transform:uppercase;letter-spacing:0.4px">${label}</div>
+        <div style="font-size:20px;font-weight:900;font-family:'Courier New',monospace;color:#4db8ff;text-align:center">${vDaily}</div>
+        <div style="font-size:20px;font-weight:900;font-family:'Courier New',monospace;color:#f39c12;text-align:center">${v1h}</div>
+      </div>`;
+  }
+
+  const fPct = v => (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+  const fNum = v => v.toFixed(2);
+
+  const hdr = `
+    <div class="metric-card" style="grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:8px 14px;background:#0a1628;border-color:#1e3050;">
+      <div></div>
+      <div style="font-size:13px;font-weight:800;color:#4db8ff;text-align:center">Daily (1985+)</div>
+      <div style="font-size:13px;font-weight:800;color:#f39c12;text-align:center">1h — Open reali</div>
+    </div>`;
+
+  setHtml('metrics-grid', hdr +
+    metricRow('Total Return',   fPct(rDaily.totalReturnPct),   fPct(r1h.totalReturnPct)) +
+    metricRow('Max Drawdown',   rDaily.maxDrawdownPct.toFixed(1)+'%', r1h.maxDrawdownPct.toFixed(1)+'%') +
+    metricRow('Profit Factor',  fNum(rDaily.profitFactor),     fNum(r1h.profitFactor)) +
+    metricRow('Win Rate',       rDaily.winRate.toFixed(1)+'%', r1h.winRate.toFixed(1)+'%') +
+    metricRow('Total Trades',   rDaily.totalTrades,            r1h.totalTrades) +
+    metricRow('Avg Win %',      '+'+rDaily.avgWinPct.toFixed(2)+'%', '+'+r1h.avgWinPct.toFixed(2)+'%') +
+    metricRow('Avg Loss %',     '-'+rDaily.avgLossPct.toFixed(2)+'%', '-'+r1h.avgLossPct.toFixed(2)+'%') +
+    metricRow('Expectancy',     fPct(rDaily.expectancyPct),   fPct(r1h.expectancyPct)) +
+    metricRow('Final Capital',  '$'+Math.round(rDaily.finalCapital).toLocaleString('en-US'), '$'+Math.round(r1h.finalCapital).toLocaleString('en-US'))
+  );
+
+  // Trades table: show daily trades
+  renderTradesTable(rDaily.trades);
+}
+
+function renderEquityChartCompare(rDaily, r1h) {
+  const ctx = document.getElementById('equity-chart');
+  if (!ctx) return;
+  if (_equityChart) { _equityChart.destroy(); _equityChart = null; }
+  _equityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: rDaily.equityLabels,
+      datasets: [
+        {
+          label: 'Daily open',
+          data: rDaily.equityCurve,
+          borderColor: '#4db8ff', backgroundColor: 'rgba(77,184,255,0.06)',
+          borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3, order: 2,
+        },
+        {
+          label: '1h open reali',
+          data: r1h.equityCurve,
+          borderColor: '#f39c12', backgroundColor: 'rgba(243,156,18,0.06)',
+          borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3, order: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: {
+        legend: { display: true, labels: { color: '#a8c0d8', font: { size: 12 }, boxWidth: 20 } },
+        tooltip: { callbacks: {
+          label: c => c.dataset.label + ': $' + Math.round(c.raw).toLocaleString('en-US'),
+          title: c => c[0].label,
+        }},
+      },
+      scales: {
+        x: { display: false },
+        y: { grid: { color: '#1e3050' }, ticks: { color: '#a8c0d8', callback: v => '$' + Math.round(v / 1000) + 'K' } },
+      },
+    },
+  });
+}
 
 function renderResults(result) {
   show('results-content');

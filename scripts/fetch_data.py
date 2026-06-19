@@ -140,7 +140,6 @@ def fetch_with_retry(ticker: str, start: str, retries: int = 3):
     for attempt in range(1, retries + 1):
         try:
             df = yf.download(ticker, **kwargs)
-            # Flatten MultiIndex columns if present
             if hasattr(df.columns, "levels"):
                 df.columns = df.columns.get_level_values(0)
             return df
@@ -149,6 +148,47 @@ def fetch_with_retry(ticker: str, start: str, retries: int = 3):
             if attempt < retries:
                 time.sleep(RETRY_WAIT)
     return None
+
+
+def fetch_1h_with_retry(ticker: str, retries: int = 3):
+    """Download ~2 years of 1h intraday data. Returns None on failure."""
+    kwargs = dict(period="730d", interval="1h", progress=False, auto_adjust=True)
+    for attempt in range(1, retries + 1):
+        try:
+            df = yf.download(ticker, **kwargs)
+            if hasattr(df.columns, "levels"):
+                df.columns = df.columns.get_level_values(0)
+            return df
+        except Exception as exc:
+            print(f"    1h attempt {attempt}/{retries} failed: {exc}", flush=True)
+            if attempt < retries:
+                time.sleep(RETRY_WAIT)
+    return None
+
+
+def df_1h_to_dict(df) -> dict | None:
+    """Convert 1h OHLCV DataFrame to JSON dict with ET datetime strings."""
+    if df is None or df.empty:
+        return None
+    df = df.dropna(subset=["Close"])
+    if df.empty:
+        return None
+    idx = df.index
+    try:
+        if idx.tz is not None:
+            idx = idx.tz_convert("America/New_York")
+        else:
+            idx = idx.tz_localize("UTC").tz_convert("America/New_York")
+    except Exception:
+        pass
+    return {
+        "dt": [t.strftime("%Y-%m-%dT%H:%M") for t in idx],
+        "o":  [round(float(v), 4) for v in df["Open"]],
+        "h":  [round(float(v), 4) for v in df["High"]],
+        "l":  [round(float(v), 4) for v in df["Low"]],
+        "c":  [round(float(v), 4) for v in df["Close"]],
+        "v":  [int(v) for v in df["Volume"]],
+    }
 
 
 # ── Main ──────────────────────────────────────────────────────────
@@ -194,6 +234,15 @@ def main():
 
                 print(f"OK ({len(df_full)} bars, {div_count} dividends)", flush=True)
                 ok += 1
+
+                # ── 1h intraday data (US only) ─────────────────────
+                if market_code == "US":
+                    df_1h = fetch_1h_with_retry(ticker)
+                    d1h   = df_1h_to_dict(df_1h)
+                    if d1h:
+                        (docs_data / f"{ticker}_1h.json").write_text(
+                            json.dumps(d1h, separators=(",", ":")), encoding="utf-8"
+                        )
 
             except Exception as exc:
                 print(f"ERROR: {exc}", flush=True)

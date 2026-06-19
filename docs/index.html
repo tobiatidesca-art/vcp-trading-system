@@ -329,6 +329,24 @@
           <input type="number" id="bt-slippage" value="0.10" step="0.05" min="0" max="2.0">
         </div>
 
+        <div class="form-section-title">📡 Data Source</div>
+        <div class="form-group">
+          <div class="radio-group" id="bt-source-group">
+            <label class="radio-label active" onclick="setSource('daily',this)">
+              <input type="radio" name="bt-source" value="daily" checked> Daily <span style="color:#6a8aaa;font-size:11px">(1985+)</span>
+            </label>
+            <label class="radio-label" onclick="setSource('1h',this)">
+              <input type="radio" name="bt-source" value="1h"> 1h — Open reali <span style="color:#6a8aaa;font-size:11px">(2023+)</span>
+            </label>
+            <label class="radio-label" onclick="setSource('compare',this)">
+              <input type="radio" name="bt-source" value="compare"> Confronta entrambi
+            </label>
+          </div>
+          <div style="font-size:11px;color:#6a8aaa;margin-top:5px">
+            I dati 1h usano l'apertura reale del primo candle (9:30 ET). Il confronto mostra entrambe le equity curve sullo stesso grafico.
+          </div>
+        </div>
+
         <div class="assumptions-box">
           <div class="assumptions-title">⚠️ Perché questo backtest è conservativo rispetto alla realtà</div>
           <ul>
