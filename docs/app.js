@@ -1199,26 +1199,63 @@ function renderCompareResults(rDaily, r1h) {
   renderTradesTable(rDaily.trades);
 }
 
+function buildDateEquity(trades, initialCapital) {
+  if (!trades.length) return { dates: [], values: [] };
+  const sorted = [...trades].sort((a, b) => a.exitDate.localeCompare(b.exitDate));
+  const dateMap = {};
+  let equity = initialCapital;
+  for (const t of sorted) {
+    equity += t.pnlUsd;
+    dateMap[t.exitDate] = +equity.toFixed(2);
+  }
+  const dates  = Object.keys(dateMap).sort();
+  const values = dates.map(d => dateMap[d]);
+  return { dates, values };
+}
+
 function renderEquityChartCompare(rDaily, r1h) {
   const ctx = document.getElementById('equity-chart');
   if (!ctx) return;
   if (_equityChart) { _equityChart.destroy(); _equityChart = null; }
+
+  const eqD  = buildDateEquity(rDaily.trades, rDaily.initialCapital);
+  const eq1h = buildDateEquity(r1h.trades,    r1h.initialCapital);
+
+  // Union of all dates, sorted
+  const allDates = [...new Set([...eqD.dates, ...eq1h.dates])].sort();
+
+  // Carry-forward interpolation for each series on the union axis
+  function align(eq, allDates, initialCapital) {
+    const map = {};
+    eq.dates.forEach((d, i) => { map[d] = eq.values[i]; });
+    let last = null;
+    return allDates.map(d => {
+      if (map[d] !== undefined) last = map[d];
+      return last;   // null until first trade, then carry-forward
+    });
+  }
+
+  const dailyVals = align(eqD,  allDates, rDaily.initialCapital);
+  const h1Vals    = align(eq1h, allDates, r1h.initialCapital);
+
   _equityChart = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: rDaily.equityLabels,
+      labels: allDates,
       datasets: [
         {
           label: 'Daily open',
-          data: rDaily.equityCurve,
+          data: dailyVals,
           borderColor: '#4db8ff', backgroundColor: 'rgba(77,184,255,0.06)',
-          borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3, order: 2,
+          borderWidth: 2, pointRadius: 0, fill: false, tension: 0.3, order: 2,
+          spanGaps: false,
         },
         {
           label: '1h open reali',
-          data: r1h.equityCurve,
+          data: h1Vals,
           borderColor: '#f39c12', backgroundColor: 'rgba(243,156,18,0.06)',
-          borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3, order: 1,
+          borderWidth: 2, pointRadius: 0, fill: false, tension: 0.3, order: 1,
+          spanGaps: false,
         },
       ],
     },
@@ -1227,12 +1264,19 @@ function renderEquityChartCompare(rDaily, r1h) {
       plugins: {
         legend: { display: true, labels: { color: '#a8c0d8', font: { size: 12 }, boxWidth: 20 } },
         tooltip: { callbacks: {
-          label: c => c.dataset.label + ': $' + Math.round(c.raw).toLocaleString('en-US'),
+          label: c => c.raw !== null ? c.dataset.label + ': $' + Math.round(c.raw).toLocaleString('en-US') : '',
           title: c => c[0].label,
         }},
       },
       scales: {
-        x: { display: false },
+        x: {
+          display: true,
+          ticks: {
+            color: '#6a8aaa', maxTicksLimit: 8, maxRotation: 0,
+            callback: (_, i) => allDates[i] ? allDates[i].slice(0, 7) : '',
+          },
+          grid: { color: '#1a2a40' },
+        },
         y: { grid: { color: '#1e3050' }, ticks: { color: '#a8c0d8', callback: v => '$' + Math.round(v / 1000) + 'K' } },
       },
     },

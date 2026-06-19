@@ -146,7 +146,7 @@ def fetch_with_retry(ticker: str, start: str, retries: int = 3):
 
 
 def fetch_1h_with_retry(ticker: str, retries: int = 3):
-    kwargs = dict(period="730d", interval="1h", progress=False, auto_adjust=True)
+    kwargs = dict(start="2023-07-01", interval="1h", progress=False, auto_adjust=True)
     for attempt in range(1, retries + 1):
         try:
             df = yf.download(ticker, **kwargs)
