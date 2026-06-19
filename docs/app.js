@@ -831,7 +831,32 @@ async function runBacktest() {
   let dataMap1h = null;
   if (isCompare || source === '1h') {
     setText('bt-progress-label', 'Downloading 1h data…');
-    dataMap1h = await _loadTickerData(tickers, '1h', isCompare ? onProgress : onProgress);
+    dataMap1h = await _loadTickerData(tickers, '1h', onProgress);
+
+    // Check if any 1h files exist
+    const has1hData = Object.keys(dataMap1h).length > 0;
+    if (!has1hData) {
+      hide('bt-progress');
+      show('results-content');
+      hide('results-placeholder');
+      hide('annual-section'); hide('monthly-section');
+      setHtml('metrics-grid', `
+        <div style="grid-column:1/-1;padding:24px;background:#1a0a00;border:2px solid #f39c12;border-radius:8px;color:#f39c12">
+          <div style="font-size:16px;font-weight:800;margin-bottom:10px">⚠️ File 1h non ancora disponibili</div>
+          <div style="font-size:13px;color:#a8c0d8;line-height:1.7">
+            I dati intraday a 1h vengono generati da <code>scripts/fetch_data.py</code>.<br>
+            Esegui il fetch manualmente oppure attendi il prossimo aggiornamento automatico di GitHub Actions.<br><br>
+            <strong>Per generarli ora:</strong><br>
+            <code style="background:#0a0a0a;padding:6px 10px;border-radius:4px;display:inline-block;margin-top:4px">
+              cd c:\\dati\\sistemi\\vcp-trading-system<br>
+              python scripts/fetch_data.py
+            </code><br><br>
+            <span style="color:#6a8aaa;font-size:12px">Tempo stimato: ~30-40 minuti per tutti i ticker US.</span>
+          </div>
+        </div>`);
+      setHtml('trades-body', '');
+      return;
+    }
   }
 
   setText('bt-progress-label', 'Running backtest…');
