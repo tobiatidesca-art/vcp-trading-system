@@ -4,8 +4,9 @@ Fetch daily OHLCV + dividend data from Yahoo Finance and write static JSON
 files consumed by the GitHub Pages frontend (docs/app.js).
 
 Outputs:
-  docs/data/screener.json   — last 2 years, all tickers (screener page)
-  docs/data/{TICKER}.json   — full history + dividends (backtest + chart)
+  docs/data/screener_MARKET.json  -- last 2 years, all tickers (screener page)
+  docs/data/{TICKER}.json         -- full history + dividends (backtest + chart)
+  docs/data/{TICKER}_1h.json      -- ~2 years 1h intraday, US only (compare mode)
 
 Run by GitHub Actions on a daily schedule (see .github/workflows/update_data.yml).
 """
@@ -20,7 +21,7 @@ try:
 except ImportError:
     sys.exit("ERROR: yfinance not installed. Run: pip install yfinance")
 
-# ── Config ────────────────────────────────────────────────────────
+# -- Config ----------------------------------------------------------------
 DATA_START     = "1985-01-01"
 SCREENER_YEARS = 2      # years of history included in screener.json
 RETRY_WAIT     = 5      # seconds between retries
@@ -85,12 +86,9 @@ MARKETS: dict[str, list[str]] = {
     ],
 }
 
-# ── Helpers ───────────────────────────────────────────────────────
+# -- Helpers ---------------------------------------------------------------
 
 def df_to_dict(df, divs=None):
-    """Convert a yfinance OHLCV DataFrame to a compact JSON-serialisable dict.
-    Optionally attach dividend data as {d:[dates], a:[amounts]}.
-    """
     if df is None or df.empty:
         return None
     df = df.dropna(subset=["Close"])
@@ -110,14 +108,12 @@ def df_to_dict(df, divs=None):
 
 
 def fetch_dividends(ticker: str) -> dict | None:
-    """Download dividend history for a ticker. Returns {d:[...], a:[...]} or None."""
     try:
         t    = yf.Ticker(ticker)
         divs = t.dividends
         if divs is None or divs.empty:
             return None
         divs = divs.dropna()
-        # Remove timezone from index
         try:
             divs.index = divs.index.tz_convert(None).normalize()
         except Exception:
@@ -144,14 +140,12 @@ def fetch_with_retry(ticker: str, start: str, retries: int = 3):
                 df.columns = df.columns.get_level_values(0)
             return df
         except Exception as exc:
-            print(f"    attempt {attempt}/{retries} failed: {exc}", flush=True)
             if attempt < retries:
                 time.sleep(RETRY_WAIT)
     return None
 
 
 def fetch_1h_with_retry(ticker: str, retries: int = 3):
-    """Download ~2 years of 1h intraday data. Returns None on failure."""
     kwargs = dict(period="730d", interval="1h", progress=False, auto_adjust=True)
     for attempt in range(1, retries + 1):
         try:
@@ -160,14 +154,12 @@ def fetch_1h_with_retry(ticker: str, retries: int = 3):
                 df.columns = df.columns.get_level_values(0)
             return df
         except Exception as exc:
-            print(f"    1h attempt {attempt}/{retries} failed: {exc}", flush=True)
             if attempt < retries:
                 time.sleep(RETRY_WAIT)
     return None
 
 
 def df_1h_to_dict(df) -> dict | None:
-    """Convert 1h OHLCV DataFrame to JSON dict with ET datetime strings."""
     if df is None or df.empty:
         return None
     df = df.dropna(subset=["Close"])
@@ -191,7 +183,17 @@ def df_1h_to_dict(df) -> dict | None:
     }
 
 
-# ── Main ──────────────────────────────────────────────────────────
+def _progress(step: int, total: int, ticker: str, phase: str, errors: int) -> None:
+    pct    = int(step / total * 100)
+    bar_w  = 30
+    filled = int(bar_w * step / total)
+    bar    = "#" * filled + "-" * (bar_w - filled)
+    line   = f"\r  [{bar}] {pct:3d}%  {ticker:<8}  {phase:<10}  errori: {errors}   "
+    sys.stdout.write(line)
+    sys.stdout.flush()
+
+
+# -- Main ------------------------------------------------------------------
 
 def main():
     today          = datetime.date.today()
@@ -199,66 +201,80 @@ def main():
     docs_data      = Path("docs/data")
     docs_data.mkdir(parents=True, exist_ok=True)
 
+    # US tickers count double (daily + 1h), others single
+    total_steps = sum(
+        len(wl) * 2 if code == "US" else len(wl)
+        for code, wl in MARKETS.items()
+    )
+    step   = 0
+    errors = 0
     total_ok = total_fail = 0
+    summary: list[tuple[str, int, int]] = []
+
+    print(f"\n  Avvio download -- {total_steps} operazioni totali\n", flush=True)
 
     for market_code, watchlist in MARKETS.items():
-        print(f"\n{'='*60}", flush=True)
-        print(f"  Market: {market_code}  ({len(watchlist)} tickers)", flush=True)
-        print(f"{'='*60}", flush=True)
-
         screener_tickers: dict = {}
         ok = fail = 0
 
-        for i, ticker in enumerate(watchlist, 1):
-            print(f"[{i}/{len(watchlist)}] {ticker} ...", end=" ", flush=True)
+        for ticker in watchlist:
+
+            # -- Daily -------------------------------------------------
+            step += 1
+            _progress(step, total_steps, ticker, f"{market_code}-daily", errors)
             try:
                 df_full = fetch_with_retry(ticker, DATA_START)
                 if df_full is None or df_full.empty:
-                    print("NO DATA")
                     fail += 1
-                    continue
+                    errors += 1
+                else:
+                    divs      = fetch_dividends(ticker)
+                    full_dict = df_to_dict(df_full, divs)
+                    if full_dict:
+                        (docs_data / f"{ticker}.json").write_text(
+                            json.dumps(full_dict, separators=(",", ":")), encoding="utf-8"
+                        )
+                    screener_df   = df_full[df_full.index.normalize().date >= screener_start]
+                    screener_dict = df_to_dict(screener_df)
+                    if screener_dict:
+                        screener_tickers[ticker] = screener_dict
+                    ok += 1
+            except Exception as exc:
+                fail += 1
+                errors += 1
+                sys.stdout.write(f"\n  ERRORE {ticker} daily: {exc}\n")
 
-                divs = fetch_dividends(ticker)
-                div_count = len(divs["d"]) if divs else 0
-
-                full_dict = df_to_dict(df_full, divs)
-                if full_dict:
-                    (docs_data / f"{ticker}.json").write_text(
-                        json.dumps(full_dict, separators=(",", ":")), encoding="utf-8"
-                    )
-
-                screener_df = df_full[df_full.index.normalize().date >= screener_start]
-                screener_dict = df_to_dict(screener_df)
-                if screener_dict:
-                    screener_tickers[ticker] = screener_dict
-
-                print(f"OK ({len(df_full)} bars, {div_count} dividends)", flush=True)
-                ok += 1
-
-                # ── 1h intraday data (US only) ─────────────────────
-                if market_code == "US":
+            # -- 1h (US only) ------------------------------------------
+            if market_code == "US":
+                step += 1
+                _progress(step, total_steps, ticker, f"{market_code}-1h", errors)
+                try:
                     df_1h = fetch_1h_with_retry(ticker)
                     d1h   = df_1h_to_dict(df_1h)
                     if d1h:
                         (docs_data / f"{ticker}_1h.json").write_text(
                             json.dumps(d1h, separators=(",", ":")), encoding="utf-8"
                         )
-
-            except Exception as exc:
-                print(f"ERROR: {exc}", flush=True)
-                fail += 1
+                except Exception as exc:
+                    errors += 1
+                    sys.stdout.write(f"\n  ERRORE {ticker} 1h: {exc}\n")
 
         # Write per-market screener file
         screener = {"updated": today.isoformat(), "market": market_code, "tickers": screener_tickers}
-        out_file = docs_data / f"screener_{market_code}.json"
-        out_file.write_text(json.dumps(screener, separators=(",", ":")), encoding="utf-8")
-        print(f"\n  → screener_{market_code}.json: {len(screener_tickers)} tickers  ({ok} OK, {fail} failed)", flush=True)
+        (docs_data / f"screener_{market_code}.json").write_text(
+            json.dumps(screener, separators=(",", ":")), encoding="utf-8"
+        )
+        summary.append((market_code, ok, fail))
         total_ok += ok
         total_fail += fail
 
-    print(f"\n{'='*60}", flush=True)
-    print(f"  TOTAL: {total_ok} OK, {total_fail} failed", flush=True)
-    print(f"{'='*60}", flush=True)
+    # Final summary
+    print(f"\n\n  {'='*46}", flush=True)
+    for code, ok, fail in summary:
+        print(f"  {code:<4}  OK: {ok:<4}  Errori: {fail}", flush=True)
+    print(f"  {'='*46}", flush=True)
+    print(f"  TOTALE  OK: {total_ok}  Errori: {total_fail}", flush=True)
+    print(f"  {'='*46}\n", flush=True)
 
 
 if __name__ == "__main__":
