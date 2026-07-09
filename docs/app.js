@@ -240,6 +240,7 @@ function readScreenerCfg() {
     bbContractionBars:  parseInt(document.getElementById('sc-bb-bars')?.value)       || 3,
     volumeMultiplier:   parseFloat(document.getElementById('sc-vol-mult')?.value)    || 1.3,
     minSignalStrength:  document.getElementById('sc-min-strength')?.value            || 'WATCH',
+    allTimeHighOnly:    document.getElementById('sc-ath')?.checked                   ?? false,
   };
 }
 
@@ -250,6 +251,16 @@ function applyBacktestToScreener() {
     const val = document.getElementById(btId)?.value;
     const el  = document.getElementById(scId);
     if (val && el) el.value = val;
+  }
+  // sync ATH checkbox
+  const btAth = document.getElementById('bt-ath');
+  const scAth = document.getElementById('sc-ath');
+  if (btAth && scAth) {
+    scAth.checked = btAth.checked;
+    const scPg = document.getElementById('sc-proximity-group');
+    const scPr = document.getElementById('sc-proximity');
+    if (scPg) scPg.style.opacity = btAth.checked ? '0.35' : '1';
+    if (scPr) scPr.disabled = btAth.checked;
   }
   document.querySelector('[data-tab="screener"]')?.click();
   runScreener();
@@ -375,6 +386,14 @@ function calcVolMA(volumes, period=20) {
   return out;
 }
 
+// ATH Before — athBefore[i] = max(highs[0..i-1]), i.e. ATH *before* bar i
+function calcATHBefore(highs) {
+  const n = highs.length;
+  const ath = new Array(n).fill(-Infinity);
+  for (let i = 1; i < n; i++) ath[i] = Math.max(ath[i - 1], highs[i - 1]);
+  return ath;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  VCP DETECTION  (mirrors Python vcp_detector.py)
 // ═══════════════════════════════════════════════════════════════════
@@ -395,12 +414,20 @@ function detectSignalFromRaw(ticker, raw, cfg=DEFAULT_CFG) {
 
   if (n < cfg.minBars) return null;
 
-  // C1: proximity to N-day high
-  const startH = Math.max(0, i - cfg.highPeriodDays + 1);
-  let highN = -Infinity;
-  for (let k = startH; k <= i; k++) highN = Math.max(highN, highs[k]);
-  const distPct = (closes[i] - highN) / highN * 100;
-  if (distPct < -cfg.proximityThreshold) return null;
+  // C1: proximity to N-day high — OR all-time-high breakout mode
+  let highN, distPct;
+  if (cfg.allTimeHighOnly) {
+    const athBefore = calcATHBefore(highs);
+    highN = athBefore[i];
+    distPct = highN > 0 ? (closes[i] - highN) / highN * 100 : -Infinity;
+    if (distPct < 0) return null; // below ATH — no signal
+  } else {
+    const startH = Math.max(0, i - cfg.highPeriodDays + 1);
+    highN = -Infinity;
+    for (let k = startH; k <= i; k++) highN = Math.max(highN, highs[k]);
+    distPct = (closes[i] - highN) / highN * 100;
+    if (distPct < -cfg.proximityThreshold) return null;
+  }
 
   // C2: BB contraction for K bars
   const bbwArr = calcBBWidth(closes, cfg.bbPeriod, cfg.bbStd);
@@ -436,13 +463,21 @@ function checkConditionsFromRaw(ticker, raw, cfg = DEFAULT_CFG) {
   const i = n - 1;
   if (n < cfg.minBars) return null;
 
-  // C1: proximity to N-day high
-  const startH = Math.max(0, i - cfg.highPeriodDays + 1);
-  let highN = -Infinity;
-  for (let k = startH; k <= i; k++) highN = Math.max(highN, highs[k]);
-  const distPct = (closes[i] - highN) / highN * 100;
-  const c1 = distPct >= -cfg.proximityThreshold;
-  if (!c1) return null; // outside price zone — not even a near signal
+  // C1: proximity to N-day high — OR all-time-high breakout mode
+  let highN, distPct, athBefore;
+  if (cfg.allTimeHighOnly) {
+    athBefore = calcATHBefore(highs);
+    highN = athBefore[i];
+    distPct = highN > 0 ? (closes[i] - highN) / highN * 100 : -Infinity;
+    if (distPct < 0) return null;
+  } else {
+    const startH = Math.max(0, i - cfg.highPeriodDays + 1);
+    highN = -Infinity;
+    for (let k = startH; k <= i; k++) highN = Math.max(highN, highs[k]);
+    distPct = (closes[i] - highN) / highN * 100;
+    if (distPct < -cfg.proximityThreshold) return null;
+  }
+  const c1 = true; // passed above
 
   // C2: BB contraction for K consecutive bars
   const nStd  = cfg.bbStd ?? cfg.bbStdDev ?? 2.0;
@@ -466,10 +501,16 @@ function checkConditionsFromRaw(ticker, raw, cfg = DEFAULT_CFG) {
   if (allPass) {
     let j = i - 1;
     while (j >= Math.max(0, i - 30)) { // cap scan at 30 days back
-      const startHJ = Math.max(0, j - cfg.highPeriodDays + 1);
-      let highNJ = -Infinity;
-      for (let k = startHJ; k <= j; k++) highNJ = Math.max(highNJ, highs[k]);
-      if ((closes[j] - highNJ) / highNJ * 100 < -cfg.proximityThreshold) break;
+      let passC1j;
+      if (cfg.allTimeHighOnly) {
+        passC1j = athBefore && athBefore[j] > 0 && closes[j] >= athBefore[j];
+      } else {
+        const startHJ = Math.max(0, j - cfg.highPeriodDays + 1);
+        let highNJ = -Infinity;
+        for (let k = startHJ; k <= j; k++) highNJ = Math.max(highNJ, highs[k]);
+        passC1j = (closes[j] - highNJ) / highNJ * 100 >= -cfg.proximityThreshold;
+      }
+      if (!passC1j) break;
       let c2j = true;
       for (let k = j - cfg.bbContractionBars + 1; k <= j; k++) {
         if (!bbwArr[k] || bbwArr[k] >= cfg.bbWidthThreshold) { c2j = false; break; }
@@ -502,16 +543,23 @@ function checkConditionsFromRaw(ticker, raw, cfg = DEFAULT_CFG) {
 }
 
 // Returns signal strength ('STRONG'/'MODERATE'/'WATCH') or null if conditions not met
-function isSignalAt(closes, highs, volumes, bbwArr, volMAArr, i, cfg) {
+function isSignalAt(closes, highs, volumes, bbwArr, volMAArr, i, cfg, athBeforeArr) {
   const minRequired = Math.max(cfg.minBars, cfg.highPeriodDays + cfg.bbContractionBars);
   if (i < minRequired) return null;
 
   // C1
-  const startH = Math.max(0, i - cfg.highPeriodDays + 1);
-  let highN = -Infinity;
-  for (let k = startH; k <= i; k++) highN = Math.max(highN, highs[k]);
-  const distPct = (closes[i] - highN) / highN * 100;
-  if (distPct < -cfg.proximityThreshold) return null;
+  let distPct;
+  if (cfg.allTimeHighOnly) {
+    const ath = athBeforeArr ? athBeforeArr[i] : -Infinity;
+    distPct = ath > 0 ? (closes[i] - ath) / ath * 100 : -Infinity;
+    if (distPct < 0) return null;
+  } else {
+    const startH = Math.max(0, i - cfg.highPeriodDays + 1);
+    let highN = -Infinity;
+    for (let k = startH; k <= i; k++) highN = Math.max(highN, highs[k]);
+    distPct = (closes[i] - highN) / highN * 100;
+    if (distPct < -cfg.proximityThreshold) return null;
+  }
 
   // C2
   for (let k = i - cfg.bbContractionBars + 1; k <= i; k++) {
@@ -735,6 +783,7 @@ function aggregate1hToDaily(raw1h) {
 
 async function _loadTickerData(tickers, source, onProgress) {
   const dataMap = {};
+  const _1hErrors = [];
   let loaded = 0;
   await Promise.all(tickers.map(async ticker => {
     try {
@@ -747,6 +796,8 @@ async function _loadTickerData(tickers, source, onProgress) {
             const raw = await resp.json();
             _ticker1hCache[ticker] = raw;
             dataMap[ticker] = aggregate1hToDaily(raw);
+          } else {
+            _1hErrors.push(`${ticker}: HTTP ${resp.status}`);
           }
         }
       } else {
@@ -761,10 +812,16 @@ async function _loadTickerData(tickers, source, onProgress) {
           }
         }
       }
-    } catch { /* skip */ }
+    } catch(e) {
+      if (source === '1h') _1hErrors.push(`${ticker}: ${e.message}`);
+    }
     loaded++;
     if (onProgress) onProgress(loaded, tickers.length, ticker);
   }));
+  if (source === '1h' && _1hErrors.length > 0) {
+    console.warn('1h load errors:', _1hErrors.slice(0, 10));
+    dataMap.__errors__ = _1hErrors;
+  }
   return dataMap;
 }
 
@@ -777,7 +834,9 @@ async function runBacktest() {
 
   const upper = tickersRaw.toUpperCase();
   const tickers = (!tickersRaw || upper.includes('ALL') || upper.includes('TUTTI'))
-    ? Object.keys(_screenerDB?.tickers || {})
+    ? (_screenerDB
+        ? Object.keys(_screenerDB.tickers)
+        : _activeMarkets.flatMap(m => MARKET_DEFS[m]?.tickers || []))
     : tickersRaw.split(',').map(t => t.trim().toUpperCase()).filter(Boolean);
 
   const cfg = {
@@ -800,11 +859,14 @@ async function runBacktest() {
     entrySlippagePct:         parseFloat(document.getElementById('bt-slippage')?.value ?? 0.10),
     minSignalStrength:        document.getElementById('bt-min-strength')?.value || 'WATCH',
     minBars:                  Math.max(200, parseInt(document.getElementById('bt-high-period')?.value || 252) + 30),
+    allTimeHighOnly:          document.getElementById('bt-ath')?.checked ?? false,
   };
 
   show('bt-progress');
   hide('results-placeholder');
   hide('results-content');
+  const _pf = document.getElementById('portfolio-section');
+  if (_pf) _pf.style.display = 'none';
   setText('bt-progress-label',   'Downloading per-ticker data…');
   setText('bt-progress-counter', `0 / ${tickers.length}`);
   document.getElementById('bt-progress-fill').style.width = '0%';
@@ -834,24 +896,34 @@ async function runBacktest() {
     dataMap1h = await _loadTickerData(tickers, '1h', onProgress);
 
     // Check if any 1h files exist
-    const has1hData = Object.keys(dataMap1h).length > 0;
+    const _1hReal = Object.keys(dataMap1h).filter(k => k !== '__errors__');
+    const has1hData = _1hReal.length > 0;
     if (!has1hData) {
+      const errs = dataMap1h.__errors__ || [];
+      const errSample = errs.slice(0, 3).join('<br>');
+      // diagnostic test fetch
+      let diagMsg = '';
+      try {
+        const _tr = await fetch('data/AAPL_1h.json');
+        if (_tr.ok) {
+          const _tj = await _tr.json();
+          diagMsg = `<span style="color:#2ecc71">Test AAPL_1h.json: OK (${(_tj.dt||[]).length} barre, ultimo: ${(_tj.dt||[]).slice(-1)[0]||'?'})</span><br>→ Problema in aggregate1hToDaily o nel parsing. Aggiorna la pagina (Ctrl+F5) e riprova.`;
+        } else {
+          diagMsg = `<span style="color:#e74c3c">Test AAPL_1h.json: HTTP ${_tr.status} ${_tr.statusText}</span><br>→ Il server non serve il file. Riavvia avvia.bat dalla cartella corretta.`;
+        }
+      } catch(diagErr) {
+        diagMsg = `<span style="color:#e74c3c">Test AAPL_1h.json: ${diagErr.message}</span><br>→ Server non raggiungibile. Verifica che avvia.bat sia in esecuzione.`;
+      }
       hide('bt-progress');
       show('results-content');
       hide('results-placeholder');
       hide('annual-section'); hide('monthly-section');
       setHtml('metrics-grid', `
         <div style="grid-column:1/-1;padding:24px;background:#1a0a00;border:2px solid #f39c12;border-radius:8px;color:#f39c12">
-          <div style="font-size:16px;font-weight:800;margin-bottom:10px">⚠️ File 1h non ancora disponibili</div>
+          <div style="font-size:16px;font-weight:800;margin-bottom:10px">⚠️ File 1h non caricati (0/${tickers.length} tickers)</div>
           <div style="font-size:13px;color:#a8c0d8;line-height:1.7">
-            I dati intraday a 1h vengono generati da <code>scripts/fetch_data.py</code>.<br>
-            Esegui il fetch manualmente oppure attendi il prossimo aggiornamento automatico di GitHub Actions.<br><br>
-            <strong>Per generarli ora:</strong><br>
-            <code style="background:#0a0a0a;padding:6px 10px;border-radius:4px;display:inline-block;margin-top:4px">
-              cd c:\\dati\\sistemi\\vcp-trading-system<br>
-              python scripts/fetch_data.py
-            </code><br><br>
-            <span style="color:#6a8aaa;font-size:12px">Tempo stimato: ~30-40 minuti per tutti i ticker US.</span>
+            ${errs.length > 0 ? `<strong style="color:#e74c3c">Errori (${errs.length}):</strong><br><code style="color:#e74c3c">${errSample}</code><br><br>` : ''}
+            <strong>Diagnosi automatica:</strong><br>${diagMsg}
           </div>
         </div>`);
       setHtml('trades-body', '');
@@ -886,6 +958,7 @@ async function runBacktest() {
     _lastCfg    = cfg;
     _lastResult = daily.result;
     renderCompareResults(daily.result, h1.result);
+    renderPortfolioSection(daily.trades, h1.trades);
   } else {
     const dataMap = source === '1h' ? dataMap1h : dataMapDaily;
     const { trades: finalTrades, result } = _runOnMap(dataMap);
@@ -893,6 +966,7 @@ async function runBacktest() {
     _lastCfg    = cfg;
     _lastResult = result;
     renderResults(result);
+    renderPortfolioSection(finalTrades, null);
   }
 }
 
@@ -904,9 +978,10 @@ function runTickerBacktest(ticker, raw, cfg) {
   if (n < 60) return [];
 
   // Pre-compute indicators once (O(n) each)
-  const bbwArr = calcBBWidth(closes, cfg.bbPeriod, cfg.bbStdDev);
-  const atrArr = calcATR(highs, lows, closes, cfg.atrPeriod);
-  const volMA  = calcVolMA(volumes);
+  const bbwArr      = calcBBWidth(closes, cfg.bbPeriod, cfg.bbStdDev);
+  const atrArr      = calcATR(highs, lows, closes, cfg.atrPeriod);
+  const volMA       = calcVolMA(volumes);
+  const athBeforeArr = cfg.allTimeHighOnly ? calcATHBefore(highs) : null;
 
   // Locate start/end bar indices by date string comparison
   let startIdx = -1, endIdx = -1;
@@ -923,6 +998,7 @@ function runTickerBacktest(ticker, raw, cfg) {
     bbContractionBars: cfg.bbContractionBars,
     volumeMultiplier:  cfg.volumeMultiplier,
     minBars:           cfg.minBars,
+    allTimeHighOnly:   cfg.allTimeHighOnly ?? false,
   };
 
   const trades = [];
@@ -935,7 +1011,7 @@ function runTickerBacktest(ticker, raw, cfg) {
     const curOpen = opens[i], curHigh = highs[i], curLow = lows[i], curClose = closes[i];
 
     if (!inPos) {
-      const sigStr = isSignalAt(closes, highs, volumes, bbwArr, volMA, i, scanCfg);
+      const sigStr = isSignalAt(closes, highs, volumes, bbwArr, volMA, i, scanCfg, athBeforeArr);
       if (sigStr && meetsMinStrength(sigStr, cfg.minSignalStrength) && i + 1 <= endIdx) {
         const slipMult = 1 + (cfg.entrySlippagePct || 0) / 100;
         entryPx = opens[i + 1] * slipMult;
@@ -971,13 +1047,16 @@ function runTickerBacktest(ticker, raw, cfg) {
 
         // ── Dividends received during holding period ──────────────
         // mirrors Python: entry_ts < date <= exit_ts
+        // raw.divs may be absent when source='1h' (aggregate1hToDaily strips it);
+        // fall back to _tickerCache which was populated from the full daily JSON.
+        const _divData = raw.divs ?? _tickerCache[ticker]?.divs;
         let divPerShare = 0, firstDivDate = null;
-        if (raw.divs?.d) {
-          for (let di = 0; di < raw.divs.d.length; di++) {
-            const dd = raw.divs.d[di];
+        if (_divData?.d) {
+          for (let di = 0; di < _divData.d.length; di++) {
+            const dd = _divData.d[di];
             if (dd > entryDateStr && dd <= exitDateStr) {
               if (!firstDivDate) firstDivDate = dd;
-              divPerShare += raw.divs.a[di];
+              divPerShare += _divData.a[di];
             }
           }
         }
@@ -1197,6 +1276,105 @@ function renderCompareResults(rDaily, r1h) {
 
   // Trades table: show daily trades
   renderTradesTable(rDaily.trades);
+}
+
+function renderPortfolioSection(tradesDaily, trades1h) {
+  const el = document.getElementById('portfolio-section');
+  if (!el) return;
+
+  const openDaily = (tradesDaily || []).filter(t => t.exitReason === 'END_OF_TEST');
+  const open1h    = (trades1h   || []).filter(t => t.exitReason === 'END_OF_TEST');
+
+  if (!openDaily.length && !open1h.length) { el.style.display = 'none'; return; }
+  el.style.display = '';
+
+  const today     = new Date().toISOString().slice(0, 10);
+  const isCompare = trades1h !== null;
+  const pnlCls    = v => v >= 0 ? 'positive' : 'negative';
+  const sign      = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+  const daysSince = d => Math.round((new Date(today) - new Date(d)) / 86400000);
+
+  let tableHtml = '';
+
+  if (isCompare) {
+    const map1h = {};
+    for (const t of open1h) map1h[t.ticker] = t;
+
+    const rows = openDaily.sort((a, b) => b.returnPct - a.returnPct).map(td => {
+      const t1h  = map1h[td.ticker];
+      const days = daysSince(td.entryDate);
+      const diff = t1h ? ((t1h.entryPrice - td.entryPrice) / td.entryPrice * 100) : null;
+      // diff > 0 → 1h entered HIGHER (worse); diff < 0 → 1h entered LOWER (better)
+      const diffCls = diff === null ? '' : diff > 0.15 ? 'negative' : diff < -0.15 ? 'positive' : 'neutral';
+      const diffStr = diff !== null ? (diff >= 0 ? '+' : '') + diff.toFixed(2) + '%' : '<span style="color:#6a8aaa">—</span>';
+      const tradeIdx = _tradeReg.indexOf(td);
+      return `<tr>
+        <td class="ticker-cell"><span style="cursor:pointer;color:#4db8ff" onclick="openChartModal('${td.ticker}',${tradeIdx})">${td.ticker}</span></td>
+        <td>${td.entryDate}</td>
+        <td style="text-align:center">${days}gg</td>
+        <td style="text-align:right;color:#4db8ff">$${td.entryPrice.toFixed(2)}</td>
+        <td style="text-align:right;color:#f39c12">${t1h ? '$' + t1h.entryPrice.toFixed(2) : '<span style="color:#6a8aaa">—</span>'}</td>
+        <td class="${diffCls}" style="text-align:center">${diffStr}</td>
+        <td style="text-align:right">$${td.exitPrice.toFixed(2)}</td>
+        <td class="${pnlCls(td.returnPct)}" style="text-align:center">${sign(td.returnPct)}</td>
+        <td class="negative" style="text-align:right">$${td.stopLossPrice.toFixed(2)}</td>
+      </tr>`;
+    }).join('');
+
+    tableHtml = `<table class="trades-table" style="width:100%;font-size:13px">
+      <thead><tr>
+        <th>Ticker</th><th>Data Ingresso</th><th>Giorni</th>
+        <th style="color:#4db8ff">Entry Daily</th>
+        <th style="color:#f39c12">Entry 1h Reale</th>
+        <th>Diff Ingresso</th>
+        <th>Prezzo Attuale</th><th>P&L Aperto</th><th>Stop Loss</th>
+      </tr></thead>
+      <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:#6a8aaa">Nessuna posizione aperta</td></tr>'}</tbody>
+    </table>`;
+  } else {
+    const src   = _getSource();
+    const label = src === '1h' ? 'Entry 1h Reale' : 'Entry Daily';
+    const rows  = openDaily.sort((a, b) => b.returnPct - a.returnPct).map(t => {
+      const days = daysSince(t.entryDate);
+      const tradeIdx = _tradeReg.indexOf(t);
+      return `<tr>
+        <td class="ticker-cell"><span style="cursor:pointer;color:#4db8ff" onclick="openChartModal('${t.ticker}',${tradeIdx})">${t.ticker}</span></td>
+        <td>${t.entryDate}</td>
+        <td style="text-align:center">${days}gg</td>
+        <td style="text-align:right">$${t.entryPrice.toFixed(2)}</td>
+        <td style="text-align:right">$${t.exitPrice.toFixed(2)}</td>
+        <td class="${pnlCls(t.returnPct)}" style="text-align:center">${sign(t.returnPct)}</td>
+        <td class="negative" style="text-align:right">$${t.stopLossPrice.toFixed(2)}</td>
+      </tr>`;
+    }).join('');
+
+    tableHtml = `<table class="trades-table" style="width:100%;font-size:13px">
+      <thead><tr>
+        <th>Ticker</th><th>Data Ingresso</th><th>Giorni</th>
+        <th>${label}</th><th>Prezzo Attuale</th><th>P&L Aperto</th><th>Stop Loss</th>
+      </tr></thead>
+      <tbody>${rows || '<tr><td colspan="7" style="text-align:center;color:#6a8aaa">Nessuna posizione aperta</td></tr>'}</tbody>
+    </table>`;
+  }
+
+  const count    = openDaily.length;
+  const lastDate = openDaily[0]?.exitDate || open1h[0]?.exitDate || today;
+  const html = `
+    <div style="display:flex;align-items:center;gap:10px;margin-top:24px;padding-top:20px;border-top:1px solid #1e3050;margin-bottom:10px">
+      <h4 style="margin:0">Portafoglio Corrente</h4>
+      <span style="background:#0a2a4a;color:#4db8ff;font-size:12px;font-weight:800;padding:3px 12px;border-radius:10px;border:1px solid #1e4a7a">${count} posizioni aperte</span>
+    </div>
+    <div style="font-size:12px;color:#6a8aaa;margin-bottom:10px">
+      Posizioni in portafoglio al <strong style="color:#a8c0d8">${lastDate}</strong> — prezzo attuale = ultima chiusura disponibile.
+      ${isCompare ? '<span style="color:#6a8aaa"> Diff Ingresso: verde = 1h entrato a prezzo inferiore al daily (vantaggio), rosso = superiore (svantaggio).</span>' : ''}
+    </div>
+    <div class="table-wrapper" style="max-height:280px;overflow-y:auto">${tableHtml}</div>
+  `;
+  el.innerHTML = html;
+
+  // Replica anche nello screener tab
+  const elSc = document.getElementById('screener-portfolio');
+  if (elSc) { elSc.style.display = ''; elSc.innerHTML = html; }
 }
 
 function buildDateEquity(trades, initialCapital) {
